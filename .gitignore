@@ -1,0 +1,6 @@
+.env
+myenv
+credentials.json
+__pycache__/
+*.pyc
+test.py
