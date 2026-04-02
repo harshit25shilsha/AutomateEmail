@@ -1,7 +1,7 @@
 # routers/auth.py
 import os, json
 from fastapi import APIRouter, HTTPException, Depends
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from database.db import get_db
 from models.hr_user import HRUser
@@ -20,11 +20,12 @@ import requests as http_requests
 load_dotenv()
 
 router        = APIRouter(prefix="/auth", tags=["Auth"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/gmail/callback")
+oauth2_scheme = HTTPBearer()
 
 GMAIL_SCOPES      = ['https://www.googleapis.com/auth/gmail.readonly',
                      'https://www.googleapis.com/auth/userinfo.email',
-                     'https://www.googleapis.com/auth/userinfo.profile']
+                     'https://www.googleapis.com/auth/userinfo.profile',
+                     'openid']
 CREDENTIALS_FILE  = 'credentials.json'
 OUTLOOK_CLIENT_ID = os.getenv("OUTLOOK_CLIENT_ID")
 OUTLOOK_TENANT    = "consumers"
@@ -153,10 +154,10 @@ def outlook_connect(db: Session = Depends(get_db)):
 
 # ── Get Current HR User (Dependency)
 def get_current_user(
-    token: str     = Depends(oauth2_scheme),
-    db:    Session = Depends(get_db)
+    token: HTTPAuthorizationCredentials = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
 ) -> HRUser:
-    payload = decode_token(token)
+    payload = decode_token(token.credentials)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 

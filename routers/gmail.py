@@ -32,8 +32,9 @@ def status(current_user: HRUser = Depends(get_current_user)):
 @router.get("/emails", response_model=EmailListResponse)
 def get_emails(
     page:      int     = Query(default=1, ge=1),
-    page_size: int     = Query(default=20, le=100),
+    page_size: int     = Query(default=100, le=1000),
     search:    str     = Query(default=None),
+    get_all:   bool    = Query(default=False),
     db:        Session = Depends(get_db),
     current_user: HRUser = Depends(get_current_user)
 ):
@@ -52,9 +53,15 @@ def get_emails(
         )
 
     total  = query.count()
-    emails = query.order_by(Email.id.desc())\
-                  .offset((page - 1) * page_size)\
-                  .limit(page_size).all()
+    
+    if get_all:
+        emails = query.order_by(Email.id.desc()).all()
+        page = 1
+        page_size = total
+    else:
+        emails = query.order_by(Email.id.desc())\
+                      .offset((page - 1) * page_size)\
+                      .limit(page_size).all()
 
     result = []
     for email in emails:
