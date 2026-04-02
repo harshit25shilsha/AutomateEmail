@@ -1,9 +1,17 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from database.db import get_db
-from models.employee import Employee
+from models.employee import Employee, TokenBlacklist
 from schemas.employee_schema import EmployeeRegister, EmployeeLogin, EmployeeLoginResponse
 from utils.security import hash_password, verify_password, create_access_token
+from fastapi.security import HTTPAuthorizationCredentials
+from utils.security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    get_current_employee,
+    bearer_scheme
+    )
 
 router = APIRouter(prefix="/employee", tags=["Employee Auth"])
 
@@ -69,3 +77,20 @@ def login(payload: EmployeeLogin, db: Session = Depends(get_db)):
         "name":         employee.name,
         "user_type":    employee.user_type
     }
+
+
+@router.post("/logout")
+def logout(
+    current_employee: dict = Depends(get_current_employee),  
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: Session = Depends(get_db)
+):
+    token = credentials.credentials
+    
+    if db.query(TokenBlacklist).filter_by(token=token).first():
+        raise HTTPException(status_code=400, detail="Already logged out")
+    
+    blacklisted = TokenBlacklist(token=token)
+    db.add(blacklisted)
+    db.commit()
+    return {"message": "Logged out successfully"}
