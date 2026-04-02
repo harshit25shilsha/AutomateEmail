@@ -90,29 +90,29 @@ def _save_attachment(token, message_id):
 
 
 # ── Fetch & Store Emails 
-def fetch_and_store_emails(
-    hr_user:     HRUser,
-    db:          Session,
-    max_results: int = 50,
-    after_date:  str = None
-):
-    token      = get_access_token(hr_user, db)
-    headers    = {"Authorization": f"Bearer {token}"}
-    filter_str = f"&$filter=receivedDateTime gt {after_date}" if after_date else ""
+def fetch_and_store_emails(hr_user: HRUser, db: Session):
+    token = get_access_token(hr_user, db)
+    headers = {"Authorization": f"Bearer {token}"}
+    skip = 0
+    new_count = 0
+    
+    while True:
+        url = (
+            f"https://graph.microsoft.com/v1.0/me/messages"
+            f"?$top=50"
+            f"&$skip={skip}"
+            f"&$orderby=receivedDateTime desc"
+            f"&$select=subject,from,receivedDateTime,body,hasAttachments,id"
+        )
 
-    url = (
-        f"https://graph.microsoft.com/v1.0/me/messages"
-        f"?$top={max_results}"
-        f"&$orderby=receivedDateTime desc"
-        f"&$select=subject,from,receivedDateTime,body,hasAttachments,id"
-        f"{filter_str}"
-    )
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise Exception(f"Failed to fetch: {response.text}")
 
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        raise Exception(f"Failed to fetch: {response.text}")
+        emails = response.json().get("value", [])
 
-    emails    = response.json().get("value", [])
+        if not emails:
+            break
     new_count = 0
 
     for email_data in emails:
@@ -122,10 +122,7 @@ def fetch_and_store_emails(
         if exists:
             continue
 
-        # Only store emails with attachments
-        if not email_data.get("hasAttachments"):
-            continue
-
+        # Store all emails (not just those with attachments)
         candidate_name, candidate_email = _extract_name_email(
             email_data.get("from", {})
         )
@@ -156,5 +153,9 @@ def fetch_and_store_emails(
 
         db.commit()
         new_count += 1
+
+        skip += 50
+        if len(emails) < 50:
+            break
 
     return new_count

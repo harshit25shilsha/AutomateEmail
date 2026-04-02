@@ -102,69 +102,67 @@ def _save_attachment(service, msg_id, part):
 
 
 # ── Fetch & Store Emails 
-def fetch_and_store_emails(
-    hr_user:     HRUser,
-    db:          Session,
-    max_results: int  = 50,
-    after_date:  str  = None
-):
+def fetch_and_store_emails(hr_user: HRUser, db: Session) -> int:
     service = get_service(hr_user, db)
-    query   = f'after:{after_date}' if after_date else ''
-
-    results  = service.users().messages().list(
-        userId='me', q=query, maxResults=max_results
-    ).execute()
-    messages = results.get('messages', [])
-
-    new_count = 0
-    for msg_ref in messages:
-        exists = db.query(Email).filter_by(email_id=msg_ref['id']).first()
-        if exists:
-            continue
-
-        msg     = service.users().messages().get(
-            userId='me', id=msg_ref['id'], format='full'
+    count = 0
+    page_token = None
+    
+    while True:
+        results = service.users().messages().list(
+            userId='me', 
+            maxResults=500, 
+            pageToken=page_token
         ).execute()
-        headers = {h['name']: h['value'] for h in msg['payload']['headers']}
+        
+        messages = results.get('messages', [])
+        if not messages:
+            break
 
-        # Check attachments first
-        parts         = msg['payload'].get("parts", [])
-        has_att_parts = any(part.get("filename") for part in parts)
+        for msg_ref in messages:
+            exists = db.query(Email).filter_by(email_id=msg_ref['id']).first()
+            if exists:
+                continue
 
-        # Only store emails with attachments
-        if not has_att_parts:
-            continue
+            msg     = service.users().messages().get(
+                userId='me', id=msg_ref['id'], format='full'
+            ).execute()
+            headers = {h['name']: h['value'] for h in msg['payload']['headers']}
 
-        from_header     = headers.get("From", "")
-        candidate_name, candidate_email = _extract_name_email(from_header)
+            from_header     = headers.get("From", "")
+            candidate_name, candidate_email = _extract_name_email(from_header)
 
-        email_record = Email(
-            email_id        = msg['id'],
-            provider        = "gmail",
-            candidate_name  = candidate_name,
-            candidate_email = candidate_email,
-            subject         = _decode_str(headers.get("Subject", "")),
-            body            = _get_body(msg['payload']),
-            date            = headers.get("Date", ""),
-            has_attachments = False
-        )
-        db.add(email_record)
-        db.flush()
+            email_record = Email(
+                email_id        = msg['id'],
+                provider        = "gmail",
+                candidate_name  = candidate_name,
+                candidate_email = candidate_email,
+                subject         = _decode_str(headers.get("Subject", "")),
+                body            = _get_body(msg['payload']),
+                date            = headers.get("Date", ""),
+                has_attachments = False
+            )
+            db.add(email_record)
+            db.flush()
 
-        for part in parts:
-            if part.get("filename"):
-                att_data = _save_attachment(service, msg['id'], part)
-                if att_data:
-                    db.add(Attachment(
-                        email_id  = email_record.id,
-                        filename  = att_data["filename"],
-                        file_path = att_data["file_path"],
-                        file_size = att_data["file_size"],
-                        file_type = att_data["file_type"]
-                    ))
-                    email_record.has_attachments = True
+            parts = msg['payload'].get("parts", [])
+            for part in parts:
+                if part.get("filename"):
+                    att_data = _save_attachment(service, msg['id'], part)
+                    if att_data:
+                        db.add(Attachment(
+                            email_id  = email_record.id,
+                            filename  = att_data["filename"],
+                            file_path = att_data["file_path"],
+                            file_size = att_data["file_size"],
+                            file_type = att_data["file_type"]
+                        ))
+                        email_record.has_attachments = True
 
-        db.commit()
-        new_count += 1
-
-    return new_count
+            db.commit()
+            count += 1
+        
+        page_token = results.get('nextPageToken')
+        if not page_token:
+            break
+    
+    return count
