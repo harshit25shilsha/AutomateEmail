@@ -3,6 +3,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database.db import create_tables
 from routers import auth, gmail, outlook
+from routers.employee_auth import router as employee_router  
+from models.employee import Employee                         
+
 
 app = FastAPI(
     title       = "Email Parser API",
@@ -27,6 +30,8 @@ def startup():
 app.include_router(auth.router)
 app.include_router(gmail.router)
 app.include_router(outlook.router)
+app.include_router(employee_router)                      
+
 
 @app.get("/")
 def root():

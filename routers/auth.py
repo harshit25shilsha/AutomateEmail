@@ -149,7 +149,7 @@ def outlook_connect(db: Session = Depends(get_db)):
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
+#Fixed JWT access token not generating — debugged .env loading issue and confirmed SECRET_KEY, ALGORITHM, EXPIRE_MINUTES all loading correctly.
 
 # ── Get Current HR User (Dependency)
 def get_current_user(
