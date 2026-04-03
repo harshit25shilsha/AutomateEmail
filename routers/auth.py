@@ -42,7 +42,7 @@ def gmail_connect(db: Session = Depends(get_db)):
         flow  = InstalledAppFlow.from_client_secrets_file(
             CREDENTIALS_FILE, GMAIL_SCOPES
         )
-        creds = flow.run_local_server(port=8080, prompt='consent')
+        creds = flow.run_local_server(port=0, prompt='consent')
 
         # Step 2 — Get HR profile from Google
         resp     = http_requests.get(
