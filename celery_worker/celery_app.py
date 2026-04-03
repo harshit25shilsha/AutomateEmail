@@ -19,4 +19,5 @@ celery_app.conf.update(
     timezone                   = "UTC",
     task_acks_late             = True,
     task_reject_on_worker_lost = True,
+    worker_pool = "gevent"
 )
