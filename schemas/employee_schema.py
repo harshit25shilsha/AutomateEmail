@@ -11,6 +11,7 @@ class UserTypeEnum(str, Enum):
     employee = "employee"
     manager  = "manager"
     admin    = "admin"
+    hr = "hr"
 
 class EmployeeRegister(BaseModel):
     name:      str
