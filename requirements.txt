@@ -20,3 +20,4 @@ PyPDF2
 python-docx
 zipfile36
 pydantic[email]
+gevent
