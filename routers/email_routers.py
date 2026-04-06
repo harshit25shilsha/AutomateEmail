@@ -1,4 +1,4 @@
-# routers/outlook.py
+# routers/email_router.py
 import os, json, zipfile, redis
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -13,24 +13,48 @@ from schemas.email_schema    import (
     EmailListResponse, MessageResponse,
     MonitorStatus, MultipleDownloadRequest
 )
-from celery_worker.tasks import monitor_outlook
+from celery_worker.tasks import monitor_gmail, monitor_outlook
+import services.gmail_service   as gmail_svc
 import services.outlook_service as outlook_svc
+from services.extractor import extract_job_position
 import io
 
-router       = APIRouter(prefix="/outlook", tags=["Outlook"])
+router       = APIRouter(prefix="/email", tags=["Email"])
 redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+
+PROVIDERS = {
+    "gmail":   gmail_svc,
+    "outlook": outlook_svc,
+}
+
+MONITOR_TASKS = {
+    "gmail":   monitor_gmail,
+    "outlook": monitor_outlook,
+}
+
+
+def get_provider_svc(provider: str):
+    svc = PROVIDERS.get(provider)
+    if not svc:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: '{provider}'. Use 'gmail' or 'outlook'.")
+    return svc
 
 
 # ── Status ────────────────────────────────────────────────────
-@router.get("/status", response_model=MessageResponse)
-def status(current_user: HRUser = Depends(get_current_user)):
-    connected = outlook_svc.is_authenticated(current_user)
+@router.get("/{provider}/status", response_model=MessageResponse)
+def status(
+    provider:     str,
+    current_user: HRUser = Depends(get_current_user)
+):
+    svc = get_provider_svc(provider)
+    connected = svc.is_authenticated(current_user)
     return {"message": "connected" if connected else "not_connected"}
 
 
 # ── Fetch Emails ──────────────────────────────────────────────
-@router.get("/emails", response_model=EmailListResponse)
+@router.get("/{provider}/emails", response_model=EmailListResponse)
 def get_emails(
+    provider:  str,
     page:      int     = Query(default=1, ge=1),
     page_size: int     = Query(default=100, le=1000),
     search:    str     = Query(default=None),
@@ -38,10 +62,11 @@ def get_emails(
     db:        Session = Depends(get_db),
     current_user: HRUser = Depends(get_current_user)
 ):
-    if not outlook_svc.is_authenticated(current_user):
-        raise HTTPException(status_code=401, detail="Outlook not connected.")
+    svc = get_provider_svc(provider)
+    if not svc.is_authenticated(current_user):
+        raise HTTPException(status_code=401, detail=f"{provider.capitalize()} not connected.")
 
-    query = db.query(Email).filter(Email.provider == "outlook")
+    query = db.query(Email).filter(Email.provider == provider)
 
     if search:
         query = query.filter(
@@ -52,8 +77,8 @@ def get_emails(
             )
         )
 
-    total  = query.count()
-    
+    total = query.count()
+
     if get_all:
         emails = query.order_by(Email.id.desc()).all()
         page = 1
@@ -75,6 +100,7 @@ def get_emails(
             "subject":         email.subject,
             "body":            email.body,
             "date":            email.date,
+            "job_position": email.job_position,
             "has_attachments": email.has_attachments,
             "attachments":     [{"id": a.id, "filename": a.filename,
                                  "file_type": a.file_type,
@@ -82,7 +108,7 @@ def get_emails(
         })
 
     return {
-        "provider":  "outlook",
+        "provider":  provider,
         "total":     total,
         "page":      page,
         "page_size": page_size,
@@ -91,36 +117,49 @@ def get_emails(
 
 
 # ── Single Email ──────────────────────────────────────────────
-@router.get("/emails/{email_id}")
+@router.get("/{provider}/emails/{email_id}")
 def get_email(
+    provider:     str,
     email_id:     int,
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
-    email = db.query(Email).filter_by(id=email_id, provider="outlook").first()
+    get_provider_svc(provider)
+    email = db.query(Email).filter_by(id=email_id, provider=provider).first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
-    atts  = db.query(Attachment).filter_by(email_id=email.id).all()
+    
+    atts = db.query(Attachment).filter_by(email_id=email.id).all()
+    
     return {
         "id":              email.id,
         "candidate_name":  email.candidate_name,
         "candidate_email": email.candidate_email,
         "subject":         email.subject,
-        "body":            email.body,
+        "job_role": email.job_position or extract_job_position(email.subject, email.body or ""),        
         "date":            email.date,
-        "attachments":     [{"id": a.id, "filename": a.filename,
-                             "file_type": a.file_type,
-                             "file_size": a.file_size} for a in atts]
+        "attachments": [
+            {
+                "id":           a.id,
+                "filename":     a.filename,
+                "file_type":    a.file_type,
+                "file_size":    a.file_size,
+                "view_url":     f"/email/{provider}/attachments/{a.id}/view",
+                "download_url": f"/email/{provider}/attachments/{a.id}/download"
+            }
+            for a in atts
+        ]
     }
 
-
 # ── View Attachment ───────────────────────────────────────────
-@router.get("/attachments/{att_id}/view")
+@router.get("/{provider}/attachments/{att_id}/view")
 def view_attachment(
+    provider:     str,
     att_id:       int,
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
+    get_provider_svc(provider)  # validate provider
     att = db.query(Attachment).filter_by(id=att_id).first()
     if not att or not os.path.exists(att.file_path):
         raise HTTPException(status_code=404, detail="Attachment not found")
@@ -128,29 +167,34 @@ def view_attachment(
 
 
 # ── Download Single ───────────────────────────────────────────
-@router.get("/attachments/{att_id}/download")
+@router.get("/{provider}/attachments/{att_id}/download")
 def download_attachment(
+    provider:     str,
     att_id:       int,
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
+    get_provider_svc(provider)  # validate provider
     att = db.query(Attachment).filter_by(id=att_id).first()
     if not att or not os.path.exists(att.file_path):
         raise HTTPException(status_code=404, detail="Attachment not found")
     return FileResponse(
         att.file_path,
         filename=att.filename,
-        media_type="application/octet-stream"
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"inline; filename={att.filename}"}  # ← add this
     )
 
 
 # ── Download Multiple ─────────────────────────────────────────
-@router.post("/attachments/download/multiple")
+@router.post("/{provider}/attachments/download/multiple")
 def download_multiple(
+    provider:     str,
     data:         MultipleDownloadRequest,
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
+    get_provider_svc(provider)  # validate provider
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for att_id in data.attachment_ids:
@@ -166,14 +210,16 @@ def download_multiple(
 
 
 # ── Download All ──────────────────────────────────────────────
-@router.get("/attachments/download/all")
+@router.get("/{provider}/attachments/download/all")
 def download_all(
+    provider:     str,
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
+    get_provider_svc(provider)  # validate provider
     atts = db.query(Attachment)\
              .join(Email, Email.id == Attachment.email_id)\
-             .filter(Email.provider == "outlook").all()
+             .filter(Email.provider == provider).all()
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for att in atts:
@@ -183,38 +229,50 @@ def download_all(
     return StreamingResponse(
         zip_buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=all_attachments.zip"}
+        headers={"Content-Disposition": f"attachment; filename={provider}_all_attachments.zip"}
     )
 
 
-# ── Monitor ───────────────────────────────────────────────────
-@router.post("/monitor/start", response_model=MessageResponse)
+# ── Monitor Start ─────────────────────────────────────────────
+@router.post("/{provider}/monitor/start", response_model=MessageResponse)
 def start_monitor(
+    provider:     str,
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
-    if not outlook_svc.is_authenticated(current_user):
-        raise HTTPException(status_code=401, detail="Outlook not connected.")
-    if redis_client.get(f"monitor:outlook:{current_user.id}"):
+    svc = get_provider_svc(provider)
+    if not svc.is_authenticated(current_user):
+        raise HTTPException(status_code=401, detail=f"{provider.capitalize()} not connected.")
+    if redis_client.get(f"monitor:{provider}:{current_user.id}"):
         return {"message": "Monitor already running"}
-    redis_client.set(f"monitor:outlook:{current_user.id}", "running")
-    monitor_outlook.apply_async(args=[current_user.id])
-    return {"message": " Outlook monitor started — checking every 10 minutes"}
+    redis_client.set(f"monitor:{provider}:{current_user.id}", "running")
+    MONITOR_TASKS[provider].apply_async(args=[current_user.id])
+    return {"message": f"{provider.capitalize()} monitor started — checking every 10 minutes"}
 
 
-@router.post("/monitor/stop", response_model=MessageResponse)
-def stop_monitor(current_user: HRUser = Depends(get_current_user)):
-    redis_client.delete(f"monitor:outlook:{current_user.id}")
-    return {"message": " Outlook monitor stopped"}
+# ── Monitor Stop ──────────────────────────────────────────────
+@router.post("/{provider}/monitor/stop", response_model=MessageResponse)
+def stop_monitor(
+    provider:     str,
+    current_user: HRUser = Depends(get_current_user)
+):
+    get_provider_svc(provider)  # validate provider
+    redis_client.delete(f"monitor:{provider}:{current_user.id}")
+    return {"message": f"{provider.capitalize()} monitor stopped"}
 
 
-@router.get("/monitor/status", response_model=MonitorStatus)
-def monitor_status(current_user: HRUser = Depends(get_current_user)):
-    is_running = redis_client.get(f"monitor:outlook:{current_user.id}") is not None
-    data       = redis_client.get(f"last_run:outlook:{current_user.id}")
+# ── Monitor Status ────────────────────────────────────────────
+@router.get("/{provider}/monitor/status", response_model=MonitorStatus)
+def monitor_status(
+    provider:     str,
+    current_user: HRUser = Depends(get_current_user)
+):
+    get_provider_svc(provider)  # validate provider
+    is_running = redis_client.get(f"monitor:{provider}:{current_user.id}") is not None
+    data       = redis_client.get(f"last_run:{provider}:{current_user.id}")
     last_check = json.loads(data)["last_run"] if data else None
     return {
-        "provider":      "outlook",
+        "provider":      provider,
         "is_running":    is_running,
         "interval_mins": 10,
         "last_check":    last_check
@@ -222,12 +280,14 @@ def monitor_status(current_user: HRUser = Depends(get_current_user)):
 
 
 # ── Manual Sync ───────────────────────────────────────────────
-@router.post("/sync", response_model=MessageResponse)
+@router.post("/{provider}/sync", response_model=MessageResponse)
 def manual_sync(
+    provider:     str,
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
-    if not outlook_svc.is_authenticated(current_user):
-        raise HTTPException(status_code=401, detail="Outlook not connected.")
-    count = outlook_svc.fetch_and_store_emails(current_user, db)
+    svc = get_provider_svc(provider)
+    if not svc.is_authenticated(current_user):
+        raise HTTPException(status_code=401, detail=f"{provider.capitalize()} not connected.")
+    count = svc.fetch_and_store_emails(current_user, db)
     return {"message": f"Synced {count} new emails"}

@@ -10,12 +10,14 @@ from models.email_model      import Email
 from models.attachment_model import Attachment
 from models.hr_user          import HRUser
 from utils.security          import decrypt_token
+from services.extractor         import extract_email_data        # ← added
+from services.attachment_reader import process_attachment         # ← added
 
 SCOPES         = ['https://www.googleapis.com/auth/gmail.readonly']
 ATTACHMENT_DIR = 'attachments/gmail'
 
 
-# ── Get Service From DB Token 
+# ── Get Service From DB Token ─────────────────────────────────
 def get_service(hr_user: HRUser, db: Session):
     if not hr_user.access_token:
         raise Exception("Gmail not connected. Please login again.")
@@ -25,10 +27,8 @@ def get_service(hr_user: HRUser, db: Session):
         json.loads(token_json), SCOPES
     )
 
-    # Auto refresh if expired
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        # Save refreshed token back to DB
         from utils.security import encrypt_token
         hr_user.access_token = encrypt_token(creds.to_json())
         db.commit()
@@ -39,7 +39,7 @@ def is_authenticated(hr_user: HRUser) -> bool:
     return hr_user.provider == "gmail" and hr_user.access_token is not None
 
 
-# ── Helpers 
+# ── Helpers ───────────────────────────────────────────────────
 def _decode_str(value):
     if not value:
         return ""
@@ -101,19 +101,19 @@ def _save_attachment(service, msg_id, part):
     }
 
 
-# ── Fetch & Store Emails 
+# ── Fetch & Store Emails ──────────────────────────────────────
 def fetch_and_store_emails(hr_user: HRUser, db: Session) -> int:
-    service = get_service(hr_user, db)
-    count = 0
+    service    = get_service(hr_user, db)
+    count      = 0
     page_token = None
-    
+
     while True:
         results = service.users().messages().list(
-            userId='me', 
-            maxResults=500, 
+            userId='me',
+            maxResults=500,
             pageToken=page_token
         ).execute()
-        
+
         messages = results.get('messages', [])
         if not messages:
             break
@@ -128,41 +128,76 @@ def fetch_and_store_emails(hr_user: HRUser, db: Session) -> int:
             ).execute()
             headers = {h['name']: h['value'] for h in msg['payload']['headers']}
 
-            from_header     = headers.get("From", "")
-            candidate_name, candidate_email = _extract_name_email(from_header)
+            from_header                      = headers.get("From", "")
+            candidate_name, candidate_email  = _extract_name_email(from_header)
+            subject                          = _decode_str(headers.get("Subject", ""))
+            body                             = _get_body(msg['payload'])
+            date                             = headers.get("Date", "")
+
+            # ── Collect attachment filenames for extractor ────
+            att_names = []
+            parts     = msg['payload'].get("parts", [])
+            for part in parts:
+                fname = _decode_str(part.get("filename", ""))
+                if fname:
+                    att_names.append(fname)
+
+            # ── Extract job position + is_job_application ─────
+            extracted = extract_email_data(
+                sender           = from_header,
+                subject          = subject,
+                raw_body         = body,
+                date             = date,
+                attachment_names = att_names
+            )
+
+            # Use extractor name only if Gmail header name is empty
+            final_name = candidate_name or extracted["candidate_name"]
 
             email_record = Email(
                 email_id        = msg['id'],
                 provider        = "gmail",
-                candidate_name  = candidate_name,
+                candidate_name  = final_name,
                 candidate_email = candidate_email,
-                subject         = _decode_str(headers.get("Subject", "")),
-                body            = _get_body(msg['payload']),
-                date            = headers.get("Date", ""),
-                has_attachments = False
+                subject         = subject,
+                body            = body,
+                date            = date,
+                has_attachments = False,
+                # ── New fields from extractor ─────────────────
+                is_job_application = extracted["is_job_application"],
+                job_position       = extracted["job_position"],
             )
             db.add(email_record)
             db.flush()
 
-            parts = msg['payload'].get("parts", [])
+            # ── Save attachments + read content ───────────────
             for part in parts:
                 if part.get("filename"):
                     att_data = _save_attachment(service, msg['id'], part)
                     if att_data:
+                        # Read resume/CV content for extra info
+                        att_info = process_attachment(att_data["file_path"])
+
                         db.add(Attachment(
                             email_id  = email_record.id,
                             filename  = att_data["filename"],
                             file_path = att_data["file_path"],
                             file_size = att_data["file_size"],
-                            file_type = att_data["file_type"]
+                            file_type = att_data["file_type"],
+                            # ── Extra info from resume ────────
+                            phone    = att_info.get("phone"),
+                            linkedin = att_info.get("linkedin"),
+                            github   = att_info.get("github"),
+                            skills   = json.dumps(att_info.get("skills", [])),
+                            experience = att_info.get("experience"),
                         ))
                         email_record.has_attachments = True
 
             db.commit()
             count += 1
-        
+
         page_token = results.get('nextPageToken')
         if not page_token:
             break
-    
+
     return count
