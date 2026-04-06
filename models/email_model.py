@@ -13,7 +13,7 @@ class Email(Base):
     subject            = Column(String, nullable=True)
     body               = Column(Text, nullable=True)
     date               = Column(String, nullable=True)
-    received_at        = Column(DateTime, nullable=True)   # ← add this
+    #received_at        = Column(DateTime, nullable=True)   # ← add this
     has_attachments    = Column(Boolean, default=False)
     is_read            = Column(Boolean, default=False)
     is_job_application = Column(Boolean, default=False, nullable=True)

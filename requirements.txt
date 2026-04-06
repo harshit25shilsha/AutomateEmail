@@ -2,8 +2,6 @@ fastapi
 uvicorn
 sqlalchemy
 psycopg2-binary
-celery
-redis
 python-jose[cryptography]
 passlib[bcrypt]
 bcrypt==4.0.1
@@ -27,6 +25,4 @@ pdf2image
 Pillow 
 openpyxl 
 pandas 
-python-docx
-beautifulsoup4
-re
+
