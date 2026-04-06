@@ -185,4 +185,4 @@ def get_profile(current_user: HRUser = Depends(get_current_user)):
 @router.post("/logout", response_model=MessageResponse)
 def logout(current_user: HRUser = Depends(get_current_user)):
     # JWT is stateless — frontend just deletes token
-    return {"message": f"✅ {current_user.name} logged out successfully"}
+    return {"message": f"{current_user.name} logged out successfully"}
