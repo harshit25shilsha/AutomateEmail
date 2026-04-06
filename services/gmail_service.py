@@ -10,8 +10,8 @@ from models.email_model      import Email
 from models.attachment_model import Attachment
 from models.hr_user          import HRUser
 from utils.security          import decrypt_token
-from services.extractor         import extract_email_data        # ← added
-from services.attachment_reader import process_attachment         # ← added
+from services.extractor         import extract_email_data       
+from services.attachment_reader import process_attachment     
 
 SCOPES         = ['https://www.googleapis.com/auth/gmail.readonly']
 ATTACHMENT_DIR = 'attachments/gmail'
