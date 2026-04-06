@@ -21,3 +21,10 @@ python-docx
 zipfile36
 pydantic[email]
 gevent
+pdfplumber 
+pytesseract 
+pdf2image 
+Pillow 
+openpyxl 
+pandas 
+python-docx
