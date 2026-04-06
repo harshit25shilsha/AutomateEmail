@@ -12,4 +12,9 @@ class Attachment(Base):
     file_path   = Column(String, nullable=False)
     file_size   = Column(Integer, nullable=True)
     file_type   = Column(String,  nullable=True)   # pdf, docx, xlsx
+    phone      = Column(String, nullable=True)         
+    linkedin   = Column(String, nullable=True)         
+    github     = Column(String, nullable=True)         
+    skills     = Column(Text,   nullable=True)         
+    experience = Column(String, nullable=True)         
     created_at = Column(DateTime(timezone=True), server_default=func.now())
