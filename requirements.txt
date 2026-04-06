@@ -2,8 +2,6 @@ fastapi
 uvicorn
 sqlalchemy
 psycopg2-binary
-celery
-redis
 python-jose[cryptography]
 passlib[bcrypt]
 bcrypt==4.0.1
@@ -20,3 +18,11 @@ PyPDF2
 python-docx
 zipfile36
 pydantic[email]
+gevent
+pdfplumber 
+pytesseract 
+pdf2image 
+Pillow 
+openpyxl 
+pandas 
+

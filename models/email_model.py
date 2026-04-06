@@ -16,4 +16,7 @@ class Email(Base):
     date             = Column(String, nullable=True)
     has_attachments  = Column(Boolean, default=False)
     is_read          = Column(Boolean, default=False)
+    is_job_application = Column(Boolean, default=False, nullable=True)
+    job_position       = Column(String,  nullable=True)  
+
     created_at       = Column(DateTime(timezone=True), server_default=func.now())
