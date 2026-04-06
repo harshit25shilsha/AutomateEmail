@@ -34,18 +34,36 @@ MONITOR_TASKS = {
     "outlook": monitor_outlook,
 }
 
+def format_date(email_obj):
+    # Best case: use stored datetime directly
+    if email_obj.received_at:
+        return {
+            "date": email_obj.received_at.strftime("%d/%m/%Y"),
+            "time": email_obj.received_at.strftime("%H:%M")
+        }
 
-def format_date(date_str):
+    # Fallback: parse raw RFC date string from DB
+    date_str = email_obj.date
+    if not date_str:
+        return {"date": None, "time": None}
+
     try:
         dt = parsedate_to_datetime(date_str)
         return {
             "date": dt.strftime("%d/%m/%Y"),
             "time": dt.strftime("%H:%M")
         }
-    except:
-        return {"date": date_str, "time": None}
-    
-    
+    except Exception:
+        pass
+
+    try:
+        dt = datetime.strptime(date_str, "%d/%m/%Y")
+        return {"date": dt.strftime("%d/%m/%Y"), "time": None}
+    except Exception:
+        pass
+
+    return {"date": date_str, "time": None}
+
 
 def get_provider_svc(provider: str):
     svc = PROVIDERS.get(provider)
@@ -73,6 +91,7 @@ def get_emails(
     page_size: int     = Query(default=100, le=1000),
     search:    str     = Query(default=None),
     get_all:   bool    = Query(default=False),
+    is_job_application: bool = Query(default=None),
     db:        Session = Depends(get_db),
     current_user: HRUser = Depends(get_current_user)
 ):
@@ -91,6 +110,9 @@ def get_emails(
             )
         )
 
+    if is_job_application is not None:
+        query = query.filter(Email.is_job_application == is_job_application)
+
     total = query.count()
 
     if get_all:
@@ -101,30 +123,123 @@ def get_emails(
         emails = query.order_by(Email.id.desc())\
                       .offset((page - 1) * page_size)\
                       .limit(page_size).all()
-        
-        result = []
-        for email_obj in emails:
-            atts = db.query(Attachment).filter_by(email_id=email_obj.id).all()
-            formatted = format_date(email_obj.date)   
-            result.append({
-                "id":              email_obj.id,
-                "email_id":        email_obj.email_id,
-                "provider":        email_obj.provider,
-                "candidate_name":  email_obj.candidate_name,
-                "candidate_email": email_obj.candidate_email,
-                "subject":         email_obj.subject,
-                "body":            email_obj.body,
-                "date":            formatted["date"],
-                "time":            formatted["time"],
-                "job_position":    email_obj.job_position,
-                "has_attachments": email_obj.has_attachments,
-                "attachments":     [{"id": a.id, "filename": a.filename,
-                                    "file_type": a.file_type,
-                                    "file_size": a.file_size} for a in atts]
-            })
+
+    result = []
+    for email_obj in emails:
+        atts = db.query(Attachment).filter_by(email_id=email_obj.id).all()
+        formatted = format_date(email_obj)
+        result.append({
+            "id":              email_obj.id,
+            "email_id":        email_obj.email_id,
+            "provider":        email_obj.provider,
+            "candidate_name":  email_obj.candidate_name,
+            "candidate_email": email_obj.candidate_email,
+            "subject":         email_obj.subject,
+            "body":            email_obj.body,
+            "date":            formatted["date"],
+            "time":            formatted["time"],
+            "job_role":        email_obj.job_position or extract_job_position(
+                                   email_obj.subject, email_obj.body or ""
+                               ),
+            "has_attachments": email_obj.has_attachments,
+            "attachments": [
+                {
+                    "id":           a.id,
+                    "filename":     a.filename,
+                    "file_type":    a.file_type,
+                    "file_size":    a.file_size,
+                    "phone":        a.phone,
+                    "linkedin":     a.linkedin,
+                    "github":       a.github,
+                    "skills":       a.skills,
+                    "experience":   a.experience,
+                    "view_url":     f"/email/{provider}/attachments/{a.id}/view",
+                    "download_url": f"/email/{provider}/attachments/{a.id}/download"
+                }
+                for a in atts
+            ]
+        })
+
     return {
         "provider":  provider,
         "total":     total,
+        "page":      page,
+        "page_size": page_size,
+        "emails":    result
+    }
+
+
+# ── All Details endpoint ──────────────────────────────────────
+@router.get("/{provider}/emails/all-details")
+def get_all_emails_with_details(
+    provider:           str,
+    page:               int  = Query(default=1, ge=1),
+    page_size:          int  = Query(default=100, le=1000),
+    search:             str  = Query(default=None),
+    get_all:            bool = Query(default=False),
+    is_job_application: bool = Query(default=None),
+    db:                 Session = Depends(get_db),
+    current_user:       HRUser  = Depends(get_current_user)
+):
+    get_provider_svc(provider)
+
+    query = db.query(Email).filter(Email.provider == provider)
+
+    if search:
+        query = query.filter(
+            or_(
+                Email.candidate_name.ilike(f"%{search}%"),
+                Email.subject.ilike(f"%{search}%"),
+                Email.candidate_email.ilike(f"%{search}%")
+            )
+        )
+
+    if is_job_application is not None:
+        query = query.filter(Email.is_job_application == is_job_application)
+
+    total = query.count()
+
+    if get_all:
+        emails    = query.order_by(Email.id.desc()).all()
+        page      = 1
+        page_size = total
+    else:
+        emails = query.order_by(Email.id.desc()) \
+                      .offset((page - 1) * page_size) \
+                      .limit(page_size).all()
+
+    result = []
+    for email_obj in emails:
+        atts      = db.query(Attachment).filter_by(email_id=email_obj.id).all()
+        formatted = format_date(email_obj)
+
+        job_role = email_obj.job_position or extract_job_position(
+            email_obj.subject, email_obj.body or ""
+        )
+        result.append({
+            "id":              email_obj.id,
+            "candidate_name":  email_obj.candidate_name,
+            "candidate_email": email_obj.candidate_email,
+            "subject":         email_obj.subject,
+            "job_role":        job_role,
+            "date":            formatted["date"],
+            "time":            formatted["time"],
+            "attachments": [
+                {
+                    "id":           a.id,
+                    "filename":     a.filename,
+                    "file_type":    a.file_type,
+                    "file_size":    a.file_size,
+                    "view_url":     f"/email/{provider}/attachments/{a.id}/view",
+                    "download_url": f"/email/{provider}/attachments/{a.id}/download"
+                }
+                for a in atts
+            ]
+        })
+
+    return {
+        "provider":  provider,
+        "total":     len(result),
         "page":      page,
         "page_size": page_size,
         "emails":    result
@@ -145,8 +260,7 @@ def get_email(
         raise HTTPException(status_code=404, detail="Email not found")
     
     atts = db.query(Attachment).filter_by(email_id=email_obj.id).all()
-    formatted = format_date(email_obj.date)
-
+    formatted = format_date(email_obj)
     return {
         "id":              email_obj.id,
         "candidate_name":  email_obj.candidate_name,
@@ -161,6 +275,11 @@ def get_email(
                 "filename":     a.filename,
                 "file_type":    a.file_type,
                 "file_size":    a.file_size,
+                "phone":        a.phone,
+                "linkedin":     a.linkedin,
+                "github":       a.github,
+                "skills":       a.skills,
+                "experience":   a.experience,
                 "view_url":     f"/email/{provider}/attachments/{a.id}/view",
                 "download_url": f"/email/{provider}/attachments/{a.id}/download"
             }
