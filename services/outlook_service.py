@@ -127,13 +127,10 @@ def fetch_and_store_emails(hr_user: HRUser, db: Session):
             subject = email_data.get("subject", "")
             body    = _get_body(email_data)
             date    = email_data.get("receivedDateTime", "")
-
-            # ── Save attachments first to get filenames ───────
             att_list  = _save_attachment(token, msg_id)
             att_names = [a["filename"] for a in att_list]
 
-            # ── Extract job position + is_job_application ─────
-            # Build sender string same format as Gmail "Name <email>"
+            
             sender_str = f"{candidate_name} <{candidate_email}>"
             extracted  = extract_email_data(
                 sender           = sender_str,

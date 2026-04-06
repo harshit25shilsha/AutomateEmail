@@ -18,6 +18,8 @@ import services.gmail_service   as gmail_svc
 import services.outlook_service as outlook_svc
 from services.extractor import extract_job_position
 import io
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 
 router       = APIRouter(prefix="/email", tags=["Email"])
 redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
@@ -32,6 +34,18 @@ MONITOR_TASKS = {
     "outlook": monitor_outlook,
 }
 
+
+def format_date(date_str):
+    try:
+        dt = parsedate_to_datetime(date_str)
+        return {
+            "date": dt.strftime("%d/%m/%Y"),
+            "time": dt.strftime("%H:%M")
+        }
+    except:
+        return {"date": date_str, "time": None}
+    
+    
 
 def get_provider_svc(provider: str):
     svc = PROVIDERS.get(provider)
@@ -87,26 +101,27 @@ def get_emails(
         emails = query.order_by(Email.id.desc())\
                       .offset((page - 1) * page_size)\
                       .limit(page_size).all()
-
-    result = []
-    for email in emails:
-        atts = db.query(Attachment).filter_by(email_id=email.id).all()
-        result.append({
-            "id":              email.id,
-            "email_id":        email.email_id,
-            "provider":        email.provider,
-            "candidate_name":  email.candidate_name,
-            "candidate_email": email.candidate_email,
-            "subject":         email.subject,
-            "body":            email.body,
-            "date":            email.date,
-            "job_position": email.job_position,
-            "has_attachments": email.has_attachments,
-            "attachments":     [{"id": a.id, "filename": a.filename,
-                                 "file_type": a.file_type,
-                                 "file_size": a.file_size} for a in atts]
-        })
-
+        
+        result = []
+        for email_obj in emails:
+            atts = db.query(Attachment).filter_by(email_id=email_obj.id).all()
+            formatted = format_date(email_obj.date)   
+            result.append({
+                "id":              email_obj.id,
+                "email_id":        email_obj.email_id,
+                "provider":        email_obj.provider,
+                "candidate_name":  email_obj.candidate_name,
+                "candidate_email": email_obj.candidate_email,
+                "subject":         email_obj.subject,
+                "body":            email_obj.body,
+                "date":            formatted["date"],
+                "time":            formatted["time"],
+                "job_position":    email_obj.job_position,
+                "has_attachments": email_obj.has_attachments,
+                "attachments":     [{"id": a.id, "filename": a.filename,
+                                    "file_type": a.file_type,
+                                    "file_size": a.file_size} for a in atts]
+            })
     return {
         "provider":  provider,
         "total":     total,
@@ -125,19 +140,21 @@ def get_email(
     current_user: HRUser  = Depends(get_current_user)
 ):
     get_provider_svc(provider)
-    email = db.query(Email).filter_by(id=email_id, provider=provider).first()
-    if not email:
+    email_obj = db.query(Email).filter_by(id=email_id, provider=provider).first()  # ← renamed
+    if not email_obj:
         raise HTTPException(status_code=404, detail="Email not found")
     
-    atts = db.query(Attachment).filter_by(email_id=email.id).all()
-    
+    atts = db.query(Attachment).filter_by(email_id=email_obj.id).all()
+    formatted = format_date(email_obj.date)
+
     return {
-        "id":              email.id,
-        "candidate_name":  email.candidate_name,
-        "candidate_email": email.candidate_email,
-        "subject":         email.subject,
-        "job_role": email.job_position or extract_job_position(email.subject, email.body or ""),        
-        "date":            email.date,
+        "id":              email_obj.id,
+        "candidate_name":  email_obj.candidate_name,
+        "candidate_email": email_obj.candidate_email,
+        "subject":         email_obj.subject,
+        "job_role":        email_obj.job_position or extract_job_position(email_obj.subject, email_obj.body or ""),
+        "date":            formatted["date"],
+        "time":            formatted["time"],
         "attachments": [
             {
                 "id":           a.id,
@@ -150,6 +167,7 @@ def get_email(
             for a in atts
         ]
     }
+
 
 # ── View Attachment ───────────────────────────────────────────
 @router.get("/{provider}/attachments/{att_id}/view")
