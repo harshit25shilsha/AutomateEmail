@@ -1,7 +1,6 @@
 # models/attachment_model.py
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
 from sqlalchemy.sql import func
-from sqlalchemy import DateTime
 from database.db import Base
 
 class Attachment(Base):
@@ -12,5 +11,10 @@ class Attachment(Base):
     filename    = Column(String, nullable=False)
     file_path   = Column(String, nullable=False)
     file_size   = Column(Integer, nullable=True)
-    file_type   = Column(String, nullable=True)   # pdf, docx, etc
+    file_type   = Column(String, nullable=True)
+    phone       = Column(String, nullable=True)
+    linkedin    = Column(String, nullable=True)
+    github      = Column(String, nullable=True)
+    skills      = Column(Text, nullable=True)
+    experience  = Column(String, nullable=True)
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
