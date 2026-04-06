@@ -113,46 +113,45 @@ def fetch_and_store_emails(hr_user: HRUser, db: Session):
 
         if not emails:
             break
-    new_count = 0
 
-    for email_data in emails:
-        msg_id = email_data.get("id", "")
+        for email_data in emails:
+            msg_id = email_data.get("id", "")
 
-        exists = db.query(Email).filter_by(email_id=msg_id).first()
-        if exists:
-            continue
+            exists = db.query(Email).filter_by(email_id=msg_id).first()
+            if exists:
+                continue
 
-        # Store all emails (not just those with attachments)
-        candidate_name, candidate_email = _extract_name_email(
-            email_data.get("from", {})
-        )
+            # Store all emails (not just those with attachments)
+            candidate_name, candidate_email = _extract_name_email(
+                email_data.get("from", {})
+            )
 
-        email_record = Email(
-            email_id        = msg_id,
-            provider        = "outlook",
-            candidate_name  = candidate_name,
-            candidate_email = candidate_email,
-            subject         = email_data.get("subject", ""),
-            body            = _get_body(email_data),
-            date            = email_data.get("receivedDateTime", ""),
-            has_attachments = False
-        )
-        db.add(email_record)
-        db.flush()
+            email_record = Email(
+                email_id        = msg_id,
+                provider        = "outlook",
+                candidate_name  = candidate_name,
+                candidate_email = candidate_email,
+                subject         = email_data.get("subject", ""),
+                body            = _get_body(email_data),
+                date            = email_data.get("receivedDateTime", ""),
+                has_attachments = False
+            )
+            db.add(email_record)
+            db.flush()
 
-        att_list = _save_attachment(token, msg_id)
-        for att_data in att_list:
-            db.add(Attachment(
-                email_id  = email_record.id,
-                filename  = att_data["filename"],
-                file_path = att_data["file_path"],
-                file_size = att_data["file_size"],
-                file_type = att_data["file_type"]
-            ))
-            email_record.has_attachments = True
+            att_list = _save_attachment(token, msg_id)
+            for att_data in att_list:
+                db.add(Attachment(
+                    email_id  = email_record.id,
+                    filename  = att_data["filename"],
+                    file_path = att_data["file_path"],
+                    file_size = att_data["file_size"],
+                    file_type = att_data["file_type"]
+                ))
+                email_record.has_attachments = True
 
-        db.commit()
-        new_count += 1
+            db.commit()
+            new_count += 1
 
         skip += 50
         if len(emails) < 50:
