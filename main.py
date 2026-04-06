@@ -2,7 +2,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database.db import create_tables
-from routers import auth, gmail, outlook
+from routers import auth
+from routers.email_routers import router as email_routers
 from routers.employee_auth import router as employee_router  
 from models.employee import Employee                         
 
@@ -29,8 +30,7 @@ def startup():
     print(" Database tables created")
 
 app.include_router(auth.router)
-app.include_router(gmail.router)
-app.include_router(outlook.router)
+app.include_router(email_routers)
 app.include_router(employee_router)                      
 
 
