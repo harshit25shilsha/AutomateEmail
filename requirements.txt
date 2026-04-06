@@ -28,3 +28,5 @@ Pillow
 openpyxl 
 pandas 
 python-docx
+beautifulsoup4
+re
