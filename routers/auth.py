@@ -101,7 +101,10 @@ def outlook_connect(db: Session = Depends(get_db)):
             authority=f"https://login.microsoftonline.com/{OUTLOOK_TENANT}",
             token_cache=cache
         )
-        result = app.acquire_token_interactive(scopes=OUTLOOK_SCOPES)
+        result = app.acquire_token_interactive(
+            scopes=OUTLOOK_SCOPES,
+            prompt="select_account"
+        )
 
         if "access_token" not in result:
             raise Exception(result.get("error_description", "Auth failed"))
