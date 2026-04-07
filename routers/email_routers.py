@@ -175,7 +175,6 @@ def get_emails(
     }
 
 
-
 @router.get("/{provider}/emails/all-details")
 def get_all_emails_with_details(
     provider: ProviderParam,
@@ -217,7 +216,17 @@ def get_all_emails_with_details(
     result = []
     for email in emails:
         atts = db.query(Attachment).filter_by(email_id=email.id).all()
-        formatted = format_date(email.date)   # ← add this line
+        formatted = format_date(email.date)
+
+        job_position = email.job_position
+        if not job_position:
+            job_position = extract_job_position(
+                subject=email.subject or "",
+                body=email.body or ""
+            )
+            if job_position:
+                email.job_position = job_position
+
         result.append(
             {
                 "id": email.id,
@@ -226,9 +235,9 @@ def get_all_emails_with_details(
                 "candidate_name": email.candidate_name,
                 "candidate_email": email.candidate_email,
                 "subject": email.subject,
-                "date": formatted["date"],     
-                "time": formatted["time"],    
-                "job_position": email.job_position,
+                "date": formatted["date"],
+                "time": formatted["time"],
+                "job_position": job_position,
                 "has_attachments": email.has_attachments,
                 "attachments": [
                     {
@@ -241,6 +250,7 @@ def get_all_emails_with_details(
                 ],
             }
         )
+
     return {
         "provider":  provider,
         "total":     len(result),
@@ -248,6 +258,7 @@ def get_all_emails_with_details(
         "page_size": page_size,
         "emails":    result
     }
+
 
 @router.get("/{provider}/emails/{email_id}")
 def get_email(
