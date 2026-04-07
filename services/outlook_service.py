@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from models.email_model      import Email
 from models.attachment_model import Attachment
 from models.hr_user          import HRUser
+from utils.date_utils        import parse_email_datetime
 from utils.security          import encrypt_token, decrypt_token
 from services.extractor         import extract_email_data        # ← added
 from services.attachment_reader import process_attachment         # ← added
@@ -151,6 +152,7 @@ def fetch_and_store_emails(hr_user: HRUser, db: Session):
                 subject         = subject,
                 body            = body,
                 date            = date,
+                received_at     = parse_email_datetime(date),
                 has_attachments = False,
                 # ── New fields from extractor ─────────────────
                 is_job_application = extracted["is_job_application"],
