@@ -17,14 +17,13 @@ from models.attachment_model import Attachment
 from models.email_model import Email
 from models.hr_user import HRUser
 from routers.auth import get_current_user
-from email.utils import parsedate_to_datetime
-from datetime import datetime, timezone, timedelta
 from schemas.email_schema import (
     EmailListResponse,
     MessageResponse,
     MultipleDownloadRequest,
 )
 from services.extractor import extract_job_position
+from utils.date_utils import format_email_datetime
 
 router = APIRouter(prefix="/email", tags=["Email"])
 
@@ -44,36 +43,6 @@ PROVIDERS = {
     "outlook": outlook_svc,
 }
 
-IST_OFFSET = timedelta(hours=5, minutes=30)
-
-def format_date(date_str: str):
-    if not date_str:
-        return {"date": None, "time": None}
-
-    try:
-        dt = parsedate_to_datetime(date_str)
-        dt_ist = dt.astimezone(timezone(IST_OFFSET))
-        return {
-            "date": dt_ist.strftime("%d/%m/%Y"),
-            "time": dt_ist.strftime("%H:%M")
-        }
-    except Exception:
-        pass
-
-    try:
-        dt = datetime.strptime(date_str, "%d/%m/%Y %H:%M")
-        return {"date": dt.strftime("%d/%m/%Y"), "time": dt.strftime("%H:%M")}
-    except Exception:
-        pass
-
-    try:
-        dt = datetime.strptime(date_str, "%d/%m/%Y")
-        return {"date": dt.strftime("%d/%m/%Y"), "time": None}
-    except Exception:
-        pass
-
-    return {"date": date_str, "time": None}
-
 
 def get_provider_svc(provider: str):
     svc = PROVIDERS.get(provider)
@@ -83,6 +52,14 @@ def get_provider_svc(provider: str):
             detail=f"Unsupported provider: '{provider}'. Use 'gmail' or 'outlook'.",
         )
     return svc
+
+
+def get_email_ordering():
+    return (
+        Email.received_at.is_(None),
+        Email.received_at.desc(),
+        Email.id.desc(),
+    )
 
 
 @router.get("/{provider}/status", response_model=MessageResponse)
@@ -126,14 +103,15 @@ def get_emails(
         )
 
     total = query.count()
+    ordering = get_email_ordering()
 
     if get_all:
-        emails = query.order_by(Email.id.desc()).all()
+        emails = query.order_by(*ordering).all()
         page = 1
         page_size = total
     else:
         emails = (
-            query.order_by(Email.id.desc())
+            query.order_by(*ordering)
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
@@ -142,6 +120,7 @@ def get_emails(
     result = []
     for email in emails:
         atts = db.query(Attachment).filter_by(email_id=email.id).all()
+        formatted = format_email_datetime(email.received_at, email.date)
         result.append(
             {
                 "id": email.id,
@@ -151,7 +130,7 @@ def get_emails(
                 "candidate_email": email.candidate_email,
                 "subject": email.subject,
                 "body": email.body,
-                "date": email.date,
+                "date": formatted["date"],
                 "job_position": email.job_position,
                 "has_attachments": email.has_attachments,
                 "attachments": [
@@ -187,9 +166,15 @@ def get_all_emails_with_details(
     db:                 Session = Depends(get_db),
     current_user:       HRUser  = Depends(get_current_user)
 ):
-    get_provider_svc(provider)
+    provider_value = provider.value
+    svc = get_provider_svc(provider_value)
+    if not svc.is_authenticated(current_user):
+        raise HTTPException(
+            status_code=401,
+            detail=f"{provider_value.capitalize()} not connected.",
+        )
 
-    query = db.query(Email).filter(Email.provider == provider)
+    query = db.query(Email).filter(Email.provider == provider_value)
 
     if search:
         query = query.filter(
@@ -204,20 +189,21 @@ def get_all_emails_with_details(
         query = query.filter(Email.is_job_application == is_job_application)
 
     total = query.count()
+    ordering = get_email_ordering()
 
     if get_all:
-        emails    = query.order_by(Email.id.desc()).all()
+        emails = query.order_by(*ordering).all()
         page      = 1
         page_size = total
     else:
-        emails = query.order_by(Email.id.desc()) \
+        emails = query.order_by(*ordering) \
                       .offset((page - 1) * page_size) \
                       .limit(page_size).all()
 
     result = []
     for email in emails:
         atts = db.query(Attachment).filter_by(email_id=email.id).all()
-        formatted = format_date(email.date)   # ← add this line
+        formatted = format_email_datetime(email.received_at, email.date)
         result.append(
             {
                 "id": email.id,
@@ -242,7 +228,7 @@ def get_all_emails_with_details(
             }
         )
     return {
-        "provider":  provider,
+        "provider":  provider_value,
         "total":     len(result),
         "page":      page,
         "page_size": page_size,
@@ -269,6 +255,7 @@ def get_email(
         raise HTTPException(status_code=404, detail="Email not found")
 
     atts = db.query(Attachment).filter_by(email_id=email.id).all()
+    formatted = format_email_datetime(email.received_at, email.date)
 
     return {
         "id": email.id,
@@ -276,7 +263,7 @@ def get_email(
         "candidate_email": email.candidate_email,
         "subject": email.subject,
         "job_role": email.job_position or extract_job_position(email.subject, email.body or ""),
-        "date": email.date,
+        "date": formatted["date"],
         "attachments": [
             {
                 "id": a.id,
