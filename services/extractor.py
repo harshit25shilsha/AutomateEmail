@@ -35,17 +35,43 @@ def extract_sender_info(sender: str) -> dict:
 
 
 JOB_PATTERNS = [
-    r'(?:application\s+for|applying\s+for|apply\s+for|resume\s+for|cv\s+for|position[:\s]+|role[:\s]+|job[:\s]+)\s*[:\-]?\s*([A-Za-z0-9\s\+\#\.]+?)(?:\s+(?:role|position|job|post|opening|opportunity))?(?:[,\.\n]|$)',
+    r'(?:application\s+for|applying\s+for|apply\s+for|resume\s+for|cv\s+for)\s*[:\-]?\s*([A-Za-z0-9\s\+\#\.]+?)(?:\s+(?:role|position|job|post|opening|opportunity))?(?:[,\.\n]|$)',
     r'([A-Za-z0-9\s\+\#\.]+?)\s+(?:developer|engineer|designer|analyst|manager|intern|consultant|architect|lead|specialist|scientist)\s+(?:application|resume|cv|position|role|job)',
     r'(?:hiring|vacancy|opening)\s+(?:for\s+)?([A-Za-z0-9\s\+\#\.]+?)(?:[,\.\n]|$)',
 ]
+
+# ── BLACKLIST: subjects that look like job patterns but aren't ──
+JOB_ROLE_BLACKLIST = [
+    r'^opportunities matching',
+    r'^opportunity matching',
+    r'^job opportunities',
+    r'^new job',
+    r'matching your profile',
+    r'matching your skills',
+    r'has been received',
+    r'verification code',
+    r'sign.?up',
+    r'otp',
+    r'account created',
+    r'security alert',
+    r'registration',
+    r'welcome to',
+    r'sign.?in',
+    r'purchase order',
+    r'privacy settings',
+    r'unsubscribe',
+]
+
 def extract_job_position(subject: str, body: str) -> str | None:
-    # Search subject only first
     for pattern in JOB_PATTERNS:
-        match = re.search(pattern, subject, re.IGNORECASE)  # ← subject only
+        match = re.search(pattern, subject, re.IGNORECASE)
         if match:
             position = match.group(1).strip()
             position = re.sub(r'\s+', ' ', position)
+
+            if any(re.search(bl, position, re.IGNORECASE) for bl in JOB_ROLE_BLACKLIST):
+                continue
+
             if 2 < len(position) < 60:
                 return position.title()
 
@@ -60,6 +86,7 @@ def extract_job_position(subject: str, body: str) -> str | None:
         return " ".join(dict.fromkeys(tech_keywords)).title()
 
     return None
+
 
 # ── Extract attachment info ───────────────────────────────────
 def extract_attachment_info(attachment_names: list[str]) -> dict:

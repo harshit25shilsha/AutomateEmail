@@ -17,6 +17,8 @@ from models.attachment_model import Attachment
 from models.email_model import Email
 from models.hr_user import HRUser
 from routers.auth import get_current_user
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone, timedelta
 from schemas.email_schema import (
     EmailListResponse,
     MessageResponse,
@@ -41,6 +43,36 @@ PROVIDERS = {
     "gmail": gmail_svc,
     "outlook": outlook_svc,
 }
+
+IST_OFFSET = timedelta(hours=5, minutes=30)
+
+def format_date(date_str: str):
+    if not date_str:
+        return {"date": None, "time": None}
+
+    try:
+        dt = parsedate_to_datetime(date_str)
+        dt_ist = dt.astimezone(timezone(IST_OFFSET))
+        return {
+            "date": dt_ist.strftime("%d/%m/%Y"),
+            "time": dt_ist.strftime("%H:%M")
+        }
+    except Exception:
+        pass
+
+    try:
+        dt = datetime.strptime(date_str, "%d/%m/%Y %H:%M")
+        return {"date": dt.strftime("%d/%m/%Y"), "time": dt.strftime("%H:%M")}
+    except Exception:
+        pass
+
+    try:
+        dt = datetime.strptime(date_str, "%d/%m/%Y")
+        return {"date": dt.strftime("%d/%m/%Y"), "time": None}
+    except Exception:
+        pass
+
+    return {"date": date_str, "time": None}
 
 
 def get_provider_svc(provider: str):
@@ -142,6 +174,80 @@ def get_emails(
         "emails": result,
     }
 
+
+
+@router.get("/{provider}/emails/all-details")
+def get_all_emails_with_details(
+    provider: ProviderParam,
+    page:               int  = Query(default=1, ge=1),
+    page_size:          int  = Query(default=100, le=1000),
+    search:             str  = Query(default=None),
+    get_all:            bool = Query(default=False),
+    is_job_application: bool = Query(default=None),
+    db:                 Session = Depends(get_db),
+    current_user:       HRUser  = Depends(get_current_user)
+):
+    get_provider_svc(provider)
+
+    query = db.query(Email).filter(Email.provider == provider)
+
+    if search:
+        query = query.filter(
+            or_(
+                Email.candidate_name.ilike(f"%{search}%"),
+                Email.subject.ilike(f"%{search}%"),
+                Email.candidate_email.ilike(f"%{search}%")
+            )
+        )
+
+    if is_job_application is not None:
+        query = query.filter(Email.is_job_application == is_job_application)
+
+    total = query.count()
+
+    if get_all:
+        emails    = query.order_by(Email.id.desc()).all()
+        page      = 1
+        page_size = total
+    else:
+        emails = query.order_by(Email.id.desc()) \
+                      .offset((page - 1) * page_size) \
+                      .limit(page_size).all()
+
+    result = []
+    for email in emails:
+        atts = db.query(Attachment).filter_by(email_id=email.id).all()
+        formatted = format_date(email.date)   # ← add this line
+        result.append(
+            {
+                "id": email.id,
+                "email_id": email.email_id,
+                "provider": email.provider,
+                "candidate_name": email.candidate_name,
+                "candidate_email": email.candidate_email,
+                "subject": email.subject,
+                "date": formatted["date"],     
+                "time": formatted["time"],    
+                "job_position": email.job_position,
+                "has_attachments": email.has_attachments,
+                "attachments": [
+                    {
+                        "id": a.id,
+                        "filename": a.filename,
+                        "file_type": a.file_type,
+                        "file_size": a.file_size,
+                    }
+                    for a in atts
+                ],
+            }
+        )
+    return {
+        "provider":  provider,
+        "total":     len(result),
+        "page":      page,
+        "page_size": page_size,
+        "emails":    result
+    }
 
 @router.get("/{provider}/emails/{email_id}")
 def get_email(
