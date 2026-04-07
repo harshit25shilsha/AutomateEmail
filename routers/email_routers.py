@@ -154,7 +154,6 @@ def get_emails(
     }
 
 
-
 @router.get("/{provider}/emails/all-details")
 def get_all_emails_with_details(
     provider: ProviderParam,
@@ -166,15 +165,9 @@ def get_all_emails_with_details(
     db:                 Session = Depends(get_db),
     current_user:       HRUser  = Depends(get_current_user)
 ):
-    provider_value = provider.value
-    svc = get_provider_svc(provider_value)
-    if not svc.is_authenticated(current_user):
-        raise HTTPException(
-            status_code=401,
-            detail=f"{provider_value.capitalize()} not connected.",
-        )
+    get_provider_svc(provider)
 
-    query = db.query(Email).filter(Email.provider == provider_value)
+    query = db.query(Email).filter(Email.provider == provider)
 
     if search:
         query = query.filter(
@@ -189,14 +182,13 @@ def get_all_emails_with_details(
         query = query.filter(Email.is_job_application == is_job_application)
 
     total = query.count()
-    ordering = get_email_ordering()
 
     if get_all:
-        emails = query.order_by(*ordering).all()
+        emails    = query.order_by(Email.id.desc()).all()
         page      = 1
         page_size = total
     else:
-        emails = query.order_by(*ordering) \
+        emails = query.order_by(Email.id.desc()) \
                       .offset((page - 1) * page_size) \
                       .limit(page_size).all()
 
@@ -228,12 +220,13 @@ def get_all_emails_with_details(
             }
         )
     return {
-        "provider":  provider_value,
+        "provider":  provider,
         "total":     len(result),
         "page":      page,
         "page_size": page_size,
         "emails":    result
     }
+
 
 @router.get("/{provider}/emails/{email_id}")
 def get_email(
