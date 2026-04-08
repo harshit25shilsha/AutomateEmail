@@ -292,7 +292,18 @@ def view_attachment(
     return FileResponse(att.file_path, filename=att.filename)
 
 
-@router.get("/{provider}/attachments/{att_id}/download")
+@router.get(
+    "/{provider}/attachments/{att_id}/download",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "content": {
+                "application/octet-stream": {},
+            },
+            "description": "Download a single attachment.",
+        }
+    },
+)
 def download_attachment(
     provider: ProviderParam,
     att_id: int,
@@ -314,11 +325,22 @@ def download_attachment(
         att.file_path,
         filename=att.filename,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f"inline; filename={att.filename}"},
+        headers={"Content-Disposition": f'attachment; filename="{att.filename}"'},
     )
 
 
-@router.post("/{provider}/attachments/download/multiple")
+@router.post(
+    "/{provider}/attachments/download/multiple",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {
+                "application/zip": {},
+            },
+            "description": "Download selected attachments as a zip file.",
+        }
+    },
+)
 def download_multiple(
     provider: ProviderParam,
     data: MultipleDownloadRequest,
@@ -347,7 +369,18 @@ def download_multiple(
     )
 
 
-@router.get("/{provider}/attachments/download/all")
+@router.get(
+    "/{provider}/attachments/download/all",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {
+                "application/zip": {},
+            },
+            "description": "Download all attachments as a zip file.",
+        }
+    },
+)
 def download_all(
     provider: ProviderParam,
     db: Session = Depends(get_db),
