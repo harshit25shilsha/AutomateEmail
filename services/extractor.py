@@ -1,4 +1,3 @@
-
 import re
 from bs4 import BeautifulSoup
 
@@ -29,6 +28,7 @@ def extract_sender_info(sender: str) -> dict:
     return {"candidate_name": name, "sender_email": email}
 
 
+
 JOB_ROLE_BLACKLIST = [
     r'^opportunities?\s+matching',
     r'^new\s+job',
@@ -45,7 +45,7 @@ JOB_ROLE_BLACKLIST = [
     r'purchase order',
     r'privacy settings',
     r'unsubscribe',
-    r'^application$',         
+    r'^application$',
     r'^regarding$',
     r'^job$',
     r'^position$',
@@ -55,11 +55,41 @@ JOB_ROLE_BLACKLIST = [
     r'invitation',
     r'^re:',
     r'^fwd:',
+    r'\bmy\s+resume\b',
+    r'\bsending\s+(you|this)\b',
+    r'\bjob\s+application\b',
+    r'\bregarding\b',
+    r'\bpurpose\b',
 ]
+
+_SYSTEM_EMAIL_PATTERNS = re.compile(
+    r'(noreply|no-reply|do-not-reply|account.?security|accountprotection'
+    r'|microsoft\.com|outlook\.com|accounts\.google|mailer-daemon'
+    r'|notifications?@|support@|info@|postmaster@)',
+    re.IGNORECASE
+)
+
+_SYSTEM_SUBJECT_PATTERNS = re.compile(
+    r'\b(welcome to|account (deactivated|created|connected|verified|updated|security)'
+    r'|security info|new app.?s? connected|sign.?in|otp|verification code'
+    r'|privacy statement|password reset|unsubscribe|update your account'
+    r'|microsoft account|outlook\.com account)\b',
+    re.IGNORECASE
+)
+
+def _is_system_email(sender_email: str, subject: str) -> bool:
+    """Return True if this looks like a platform/system email, not a human job application."""
+    if sender_email and _SYSTEM_EMAIL_PATTERNS.search(sender_email):
+        return True
+    if subject and _SYSTEM_SUBJECT_PATTERNS.search(subject):
+        return True
+    return False
+
 
 def _is_blacklisted(text: str) -> bool:
     t = text.strip()
     return any(re.search(p, t, re.IGNORECASE) for p in JOB_ROLE_BLACKLIST)
+
 
 
 TECH_KEYWORDS_PATTERN = re.compile(
@@ -78,43 +108,31 @@ TECH_KEYWORDS_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-
 ROLE_SUFFIX_PATTERN = re.compile(
     r'\b(developer|engineer|designer|analyst|manager|intern|consultant|'
     r'architect|lead|specialist|scientist|administrator|tester?|executive|'
     r'associate|coordinator|director|officer|head|'
-    
     r'programmer|coder|hacker|technician|integrator|implementer|'
     r'maintainer|troubleshooter|debugger|reviewer|'
-    
     r'researcher|modeler|annotator|labeler|curator|'
-    
-    r'developer|illustrator|animator|videographer|photographer|'
+    r'illustrator|animator|videographer|photographer|'
     r'copywriter|content\s+writer|technical\s+writer|blogger|'
-    
     r'supervisor|superintendent|president|vice\s+president|vp|'
     r'cto|ceo|coo|cfo|founder|co.?founder|'
-    
     r'support|representative|agent|operator|handler|dispatcher|'
-    r'administrator|moderator|auditor|inspector|evaluator|assessor|'
-    
+    r'moderator|auditor|inspector|evaluator|assessor|'
     r'strategist|planner|campaigner|promoter|advertiser|'
     r'account\s+manager|account\s+executive|business\s+developer|'
     r'growth\s+hacker|seo\s+specialist|'
-    
     r'recruiter|talent\s+acquisition|hr\s+executive|hr\s+manager|'
     r'staffing\s+specialist|hiring\s+manager|'
-    
-    r'accountant|bookkeeper|auditor|tax\s+consultant|'
+    r'accountant|bookkeeper|tax\s+consultant|'
     r'lawyer|advocate|paralegal|compliance\s+officer|'
-    
     r'devops|sre|site\s+reliability|platform\s+engineer|'
     r'cloud\s+engineer|network\s+engineer|security\s+engineer|'
     r'infrastructure\s+engineer|systems\s+engineer|'
-    
     r'qa|qc|quality\s+engineer|automation\s+engineer|'
     r'performance\s+engineer|test\s+lead|test\s+manager|'
-    
     r'trainee|apprentice|fellow|graduate|fresher)\b',
     re.IGNORECASE
 )
@@ -166,7 +184,6 @@ _SUBJECT_PATTERNS = [
     r'internship\s+(?:application\s+)?(?:for\s+|[\-\|]\s*)?([A-Za-z0-9][A-Za-z0-9\s\+\#\.]+?)(?:[,\.\n(]|$)',
 
     r'(?:fresher|entry\s+level|junior|senior|lead)\s+([A-Za-z0-9][A-Za-z0-9\s\+\#\.]+?)\s+(?:application|resume|cv|position|role)(?:[,\.\n(]|$)',
-
 ]
 
 def _extract_from_subject(subject: str) -> str | None:
@@ -182,7 +199,9 @@ def _extract_from_subject(subject: str) -> str | None:
     return None
 
 
+
 _BODY_PATTERNS = [
+    
     r'(?:applying|applied|application)\s+(?:for\s+(?:the\s+)?|to\s+(?:the\s+)?)?'
     r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)\s+(?:position|role|job|opening|post|vacancy)',
 
@@ -195,7 +214,7 @@ _BODY_PATTERNS = [
 
     r'(?:job\s+title|position|role|designation)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:[,\.\n(]|$)',
 
-     r'(?:apply|applied|applying)\s+as\s+(?:a\s+|an\s+)?([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:[,\.\n(]|$)',
+    r'(?:apply|applied|applying)\s+as\s+(?:a\s+|an\s+)?([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:[,\.\n(]|$)',
 
     r'writing\s+to\s+(?:apply|express)\s+.*?(?:for|in)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)\s+(?:position|role|job|opening)',
 
@@ -218,8 +237,10 @@ _BODY_PATTERNS = [
     r'(?:strong|keen|great)\s+interest\s+in\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)\s+(?:position|role|job|opening)',
 
     r'(?:hiring|recruiting)\s+(?:for\s+)?(?:a\s+|an\s+)?([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:\s+position|\s+role|\s+job|[,\.\n(]|$)',
-
 ]
+
+
+_MAX_ROLE_WORDS = 10
 
 def _extract_from_body(body: str) -> str | None:
     snippet = body[:1000]
@@ -230,6 +251,8 @@ def _extract_from_body(body: str) -> str | None:
             candidate = re.sub(r'\s+', ' ', candidate)
             if _is_blacklisted(candidate):
                 continue
+            if len(candidate.split()) > _MAX_ROLE_WORDS:
+                continue
             if 2 < len(candidate) < 80:
                 return candidate.title()
     return None
@@ -237,10 +260,6 @@ def _extract_from_body(body: str) -> str | None:
 
 
 def _extract_via_keywords(subject: str, body: str) -> str | None:
-    """
-    Finds the closest <tech keyword> + <role suffix> pair, e.g.
-    "Python Developer", "Java Backend Engineer", "React.js Frontend Lead"
-    """
     for text in (subject, body[:500]):
         tech_matches = list(TECH_KEYWORDS_PATTERN.finditer(text))
         role_matches = list(ROLE_SUFFIX_PATTERN.finditer(text))
@@ -274,19 +293,15 @@ def _extract_via_keywords(subject: str, body: str) -> str | None:
     return None
 
 
-def extract_job_position(subject: str, body: str) -> str | None:
-    """
-    Priority:
-      1. Explicit patterns on subject line  (most reliable)
-      2. Explicit patterns in body text
-      3. Tech-keyword + role-suffix proximity match
-      4. None  (don't guess)
-    """
+def extract_job_position(subject: str, body: str, sender_email: str = "") -> str | None:
+    if _is_system_email(sender_email, subject):
+        return None
     return (
         _extract_from_subject(subject)
         or _extract_from_body(body)
         or _extract_via_keywords(subject, body)
     )
+
 
 def extract_attachment_info(attachment_names: list[str]) -> dict:
     types = []
@@ -304,11 +319,16 @@ JOB_APPLICATION_KEYWORDS = re.compile(
     r'\b(job\s+application|applying\s+for|resume|cv|curriculum\s+vitae|'
     r'cover\s+letter|hiring|position|vacancy|opening|opportunity|'
     r'work\s+experience|internship|fresher|experienced\s+candidate|'
-    r'regarding\s+.*(?:developer|engineer|designer|analyst|manager))\b',
+    r'regarding\s+.*(?:developer|engineer|designer|analyst|manager)|'
+    r'application\s+for\s+\w.*job|'          
+    r'application\s+for\s+\w.*role|'         
+    r'application\s+for\s+\w.*position)\b', 
     re.IGNORECASE
 )
 
-def is_job_application(subject: str, body: str) -> bool:
+def is_job_application(subject: str, body: str, sender_email: str = "") -> bool:
+    if _is_system_email(sender_email, subject):
+        return False
     text = f"{subject} {body[:500]}"
     return bool(JOB_APPLICATION_KEYWORDS.search(text))
 
@@ -323,13 +343,15 @@ def extract_email_data(
 ) -> dict:
     clean_body      = clean_email_body(raw_body)
     sender_info     = extract_sender_info(sender)
-    job_position    = extract_job_position(subject, clean_body)
+    sender_email    = sender_info["sender_email"] or ""
+
+    job_position    = extract_job_position(subject, clean_body, sender_email)
     attachment_info = extract_attachment_info(attachment_names)
-    job_application = is_job_application(subject, clean_body)
+    job_application = is_job_application(subject, clean_body, sender_email)
 
     return {
         "candidate_name"    : sender_info["candidate_name"],
-        "sender_email"      : sender_info["sender_email"],
+        "sender_email"      : sender_email,
         "is_job_application": job_application,
         "job_position"      : job_position,
         "subject"           : subject,
