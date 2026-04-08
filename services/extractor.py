@@ -3,17 +3,22 @@ from bs4 import BeautifulSoup
 
 
 def clean_email_body(raw_body: str) -> str:
-    if any(tag in raw_body.lower() for tag in ["<html", "<div", "<p>"]):
-        soup = BeautifulSoup(raw_body, "lxml")
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-        clean_text = soup.get_text(separator=" ")
-        return " ".join(clean_text.split())
+    if not raw_body:
+        return ""  
+    if any(tag in raw_body.lower() for tag in ["<html", "<div", "<p", "<br"]):
+        try:
+            soup = BeautifulSoup(raw_body, "lxml")
+            for tag in soup(["script", "style"]):
+                tag.decompose()
+            clean_text = soup.get_text(separator=" ")
+            return " ".join(clean_text.split())
+        except Exception:
+            return re.sub(r'<[^>]+>', '', raw_body).strip()       
     return raw_body.strip()
 
 
 def extract_sender_info(sender: str) -> dict:
-    name  = None
+    name = None
     email = None
     email_match = re.search(r'<([^>]+)>', sender)
     if email_match:
@@ -26,7 +31,6 @@ def extract_sender_info(sender: str) -> dict:
         if plain_email:
             email = plain_email.group(0)
     return {"candidate_name": name, "sender_email": email}
-
 
 
 JOB_ROLE_BLACKLIST = [
@@ -59,7 +63,6 @@ JOB_ROLE_BLACKLIST = [
     r'\bsending\s+(you|this)\b',
     r'\bjob\s+application\b',
     r'\bregarding\b',
-    r'\bpurpose\b',
 ]
 
 _SYSTEM_EMAIL_PATTERNS = re.compile(
@@ -77,6 +80,7 @@ _SYSTEM_SUBJECT_PATTERNS = re.compile(
     re.IGNORECASE
 )
 
+
 def _is_system_email(sender_email: str, subject: str) -> bool:
     """Return True if this looks like a platform/system email, not a human job application."""
     if sender_email and _SYSTEM_EMAIL_PATTERNS.search(sender_email):
@@ -89,7 +93,6 @@ def _is_system_email(sender_email: str, subject: str) -> bool:
 def _is_blacklisted(text: str) -> bool:
     t = text.strip()
     return any(re.search(p, t, re.IGNORECASE) for p in JOB_ROLE_BLACKLIST)
-
 
 
 TECH_KEYWORDS_PATTERN = re.compile(
@@ -137,8 +140,32 @@ ROLE_SUFFIX_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+_PURE_JOB_TITLE_PATTERN = re.compile(
+    r'^(?:(?:senior|junior|lead|sr\.?|jr\.?|associate|principal|staff)\s+)?'
+    r'(?:[A-Za-z0-9#\+\.]+\s+){0,4}'    
+    r'(?:developer|engineer|designer|analyst|manager|intern|consultant|'
+    r'architect|lead|specialist|scientist|administrator|tester|'
+    r'qa|devops|researcher|programmer|executive|coordinator|'
+    r'recruiter|accountant|copywriter|writer|trainer|fresher)'
+    r'(?:\s+(?:trainee|intern|lead|head|associate|fresher|graduate))?'
+    r'\s*$',
+    re.IGNORECASE
+)
+
+_JOB_ROLE_FOR_PATTERN = re.compile(
+    r'(?:job\s+role\s+for|opening\s+for|vacancy\s+for|hiring\s+for|role\s+for)\s+'
+    r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.]+?)(?:[,\.\n(]|$)',
+    re.IGNORECASE
+)
+
+def _subject_is_pure_job_title(subject: str) -> bool:
+    return bool(_PURE_JOB_TITLE_PATTERN.match(subject.strip()))
+
 
 _SUBJECT_PATTERNS = [
+    r'(?:job\s+role\s+for|opening\s+for|vacancy\s+for|hiring\s+for|role\s+for)\s+'
+    r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.]+?)(?:[,\.\n(]|$)',
+
     r'(?:application\s+for|applying\s+for|apply\s+for|resume\s+for|cv\s+for)\s*[:\-]?\s*'
     r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:\s+(?:role|position|job|post|opening|opportunity))?'
     r'(?:[,\.\n(]|$)',
@@ -186,7 +213,22 @@ _SUBJECT_PATTERNS = [
     r'(?:fresher|entry\s+level|junior|senior|lead)\s+([A-Za-z0-9][A-Za-z0-9\s\+\#\.]+?)\s+(?:application|resume|cv|position|role)(?:[,\.\n(]|$)',
 ]
 
+
 def _extract_from_subject(subject: str) -> str | None:
+    _STRIP_PREFIX = re.compile(
+        r'^(?:applying\s+for|apply\s+for|application\s+for|resume\s+for|cv\s+for'
+        r'|job\s+role\s+for|opening\s+for|vacancy\s+for|hiring\s+for|role\s+for'
+        r'|job\s+opening\s+for|position\s+of|post\s+of)\s+',
+        re.IGNORECASE
+    )
+    stripped = subject.strip()
+    remainder = _STRIP_PREFIX.sub('', stripped).strip().rstrip('.,;:')
+    if _subject_is_pure_job_title(remainder) and not _is_blacklisted(remainder):
+        return remainder.title()
+
+    if _subject_is_pure_job_title(stripped) and not _is_blacklisted(stripped):
+        return stripped.title()
+
     for pattern in _SUBJECT_PATTERNS:
         m = re.search(pattern, subject, re.IGNORECASE)
         if m:
@@ -199,9 +241,7 @@ def _extract_from_subject(subject: str) -> str | None:
     return None
 
 
-
 _BODY_PATTERNS = [
-    
     r'(?:applying|applied|application)\s+(?:for\s+(?:the\s+)?|to\s+(?:the\s+)?)?'
     r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)\s+(?:position|role|job|opening|post|vacancy)',
 
@@ -237,10 +277,21 @@ _BODY_PATTERNS = [
     r'(?:strong|keen|great)\s+interest\s+in\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)\s+(?:position|role|job|opening)',
 
     r'(?:hiring|recruiting)\s+(?:for\s+)?(?:a\s+|an\s+)?([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:\s+position|\s+role|\s+job|[,\.\n(]|$)',
+
+    r'(?:resume|cv|application)\s+(?:regarding|for)\s+job\s+application\s+for\s+'
+    r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:[,\.\n(]|$)',
+
+    r'sending\s+(?:you\s+)?(?:my\s+)?(?:resume|cv)\s+regarding\s+'
+    r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:[,\.\n(]|$)',
+
+    r'(?:this\s+is\s+(?:an?\s+)?application\s+for\s+)'
+    r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)(?:\s+job|\s+role|\s+position|[,\.\n(]|$)',
+
+    r'interest\s+in\s+the\s+([A-Za-z0-9][A-Za-z0-9\s\+\#\.\-]+?)\s+position\s+at\s+\w',
 ]
 
+_MAX_ROLE_WORDS = 20
 
-_MAX_ROLE_WORDS = 10
 
 def _extract_from_body(body: str) -> str | None:
     snippet = body[:1000]
@@ -256,7 +307,6 @@ def _extract_from_body(body: str) -> str | None:
             if 2 < len(candidate) < 80:
                 return candidate.title()
     return None
-
 
 
 def _extract_via_keywords(subject: str, body: str) -> str | None:
@@ -320,18 +370,48 @@ JOB_APPLICATION_KEYWORDS = re.compile(
     r'cover\s+letter|hiring|position|vacancy|opening|opportunity|'
     r'work\s+experience|internship|fresher|experienced\s+candidate|'
     r'regarding\s+.*(?:developer|engineer|designer|analyst|manager)|'
-    r'application\s+for\s+\w.*job|'          
-    r'application\s+for\s+\w.*role|'         
-    r'application\s+for\s+\w.*position)\b', 
+    r'application\s+for\s+\w.*job|'
+    r'application\s+for\s+\w.*role|'
+    r'application\s+for\s+\w.*position)\b',
     re.IGNORECASE
 )
 
+
 def is_job_application(subject: str, body: str, sender_email: str = "") -> bool:
-    if _is_system_email(sender_email, subject):
+    body = body or ""
+    subject = subject or ""
+    
+    is_reply = bool(re.match(r'^(Re|Fwd):', subject, re.IGNORECASE))
+    
+    if _is_system_email(sender_email, subject) and not is_reply:
         return False
+
+    strong_subject_signals = [
+        r'(?:developer|engineer|role|position|job)\s+application',
+        r'application\s+for\s+.*?(?:developer|engineer|role|position)',
+        r'regarding\s+.*?(?:developer|engineer|role|position|job)'
+    ]
+    if any(re.search(p, subject, re.IGNORECASE) for p in strong_subject_signals):
+        return True
+
+    if _subject_is_pure_job_title(subject.strip()):
+        return True
+    
+    subject_has_role = bool(
+        TECH_KEYWORDS_PATTERN.search(subject) or ROLE_SUFFIX_PATTERN.search(subject)
+    )
+    
+    body_has_signal = bool(re.search(
+        r'\b(resume|cv|application|applying|trainee|developer|engineer|'
+        r'position|role|job|hiring|fresher|cover\s+letter)\b',
+        body[:500], re.IGNORECASE
+    ))
+    
+    if subject_has_role and body_has_signal:
+        return True
+
     text = f"{subject} {body[:500]}"
     return bool(JOB_APPLICATION_KEYWORDS.search(text))
-
 
 
 def extract_email_data(
@@ -348,6 +428,11 @@ def extract_email_data(
     job_position    = extract_job_position(subject, clean_body, sender_email)
     attachment_info = extract_attachment_info(attachment_names)
     job_application = is_job_application(subject, clean_body, sender_email)
+
+    if not sender_info["candidate_name"]:
+        sig_match = re.search(r'(?:Regards|Best|Thanks|Sincerely),\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', clean_body)
+        if sig_match:
+            sender_info["candidate_name"] = sig_match.group(1)
 
     return {
         "candidate_name"    : sender_info["candidate_name"],
