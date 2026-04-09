@@ -1,4 +1,5 @@
 # schemas/email_schema.py
+from datetime import datetime
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 
@@ -22,6 +23,9 @@ class AttachmentSchema(BaseModel):
     filename:  str
     file_type: Optional[str] = None
     file_size: Optional[int] = None
+    is_viewed: bool = False
+    viewed_at: Optional[datetime] = None
+    view_count: int = 0
 
     class Config:
         from_attributes = True
