@@ -24,7 +24,7 @@ def create_tables():
     from models.hr_user import HRUser
     from models.email_model import Email
     from models.attachment_model import Attachment
-    from models.attachment_view import AttachmentView
+    from models.attachment_activity import AttachmentActivity
     from models.employee import Employee
 
     Base.metadata.create_all(bind=engine)
