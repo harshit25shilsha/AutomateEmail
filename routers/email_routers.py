@@ -233,9 +233,18 @@ def get_all_emails_with_details(
     description="Search by candidate name and E-mail"),
     get_all:            bool          = Query(default=False),
     is_job_application: Optional[bool]= Query(default=None),
-    job_category:       Optional[str] = Query(default=None),  
-    date_from:          Optional[str] = Query(default=None),  
-    date_to:            Optional[str] = Query(default=None),  
+    date_from: Optional[str] = Query(
+        default=None,
+        description="Format: DD/MM/YYYY"
+    ),
+    date_to: Optional[str] = Query(
+        default=None,
+        description="Format: DD/MM/YYYY"
+    ),
+    job_category: Optional[str] = Query(
+        default=None,
+        description="Filter by job category (e.g. python, java, django, react, flutter)"
+    ),  
     has_attachments:    Optional[bool]= Query(default=None),
     db:                 Session       = Depends(get_db),
     current_user:       HRUser        = Depends(get_current_user)
@@ -271,7 +280,7 @@ def get_all_emails_with_details(
         matched_positions = [
             row.job_position
             for row in all_positions
-            if get_category_from_position(row.job_position) == category_key  # ← fixed
+            if get_category_from_position(row.job_position) == category_key  
         ]
 
         if not matched_positions:
@@ -295,24 +304,23 @@ def get_all_emails_with_details(
 
     if date_from:
         try:
-            date_from_dt = datetime.strptime(date_from, "%Y-%m-%d")
+            date_from_dt = datetime.strptime(date_from, "%d/%m/%Y")
             query = query.filter(Email.received_at >= date_from_dt)
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid date_from format. Use YYYY-MM-DD"
+                detail="Invalid date_from format. Use DD/MM/YYYY"
             )
 
     if date_to:
         try:
-            date_to_dt = datetime.strptime(date_to, "%d-%m-%Y") + timedelta(days=1)
+            date_to_dt = datetime.strptime(date_to, "%d/%m/%Y") + timedelta(days=1)
             query = query.filter(Email.received_at < date_to_dt)
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid date_to format. Use DD-MM-YYYY"
+                detail="Invalid date_to format. Use DD/MM/YYYY"
             )
-
     if has_attachments is not None:
         query = query.filter(Email.has_attachments == has_attachments)
 
@@ -401,21 +409,8 @@ def get_job_categories(
             groups[key] = {
                 "category":  key.capitalize(),
                 "positions": [],
-                "total":     0
             }
         groups[key]["positions"].append(position)
-
-    for key in groups:
-        count = (
-            db.query(func.count(Email.id))
-            .filter(
-                Email.provider == provider,
-                Email.is_job_application == True,
-                Email.job_position.in_(groups[key]["positions"])
-            )
-            .scalar()
-        )
-        groups[key]["total"] = count
 
     sorted_categories = sorted(groups.values(), key=lambda x: x["category"])
 
@@ -423,7 +418,6 @@ def get_job_categories(
         "provider":   provider,
         "categories": sorted_categories
     }
-
 
 @router.get("/{provider}/emails/job-positions")
 def get_job_positions(
