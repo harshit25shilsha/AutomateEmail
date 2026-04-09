@@ -3,13 +3,12 @@ import io
 import os
 import zipfile
 from enum import Enum
-from typing import Annotated
-
+from typing import Annotated, Optional
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
-
 import services.gmail_service as gmail_svc
 import services.outlook_service as outlook_svc
 from database.db import get_db
@@ -142,6 +141,7 @@ def get_emails(
                     }
                     for a in atts
                 ],
+
             }
         )
 
@@ -152,81 +152,6 @@ def get_emails(
         "page_size": page_size,
         "emails": result,
     }
-
-
-@router.get("/{provider}/emails/all-details")
-def get_all_emails_with_details(
-    provider: ProviderParam,
-    page:               int  = Query(default=1, ge=1),
-    page_size:          int  = Query(default=100, le=1000),
-    search:             str  = Query(default=None),
-    get_all:            bool = Query(default=False),
-    is_job_application: bool = Query(default=None),
-    db:                 Session = Depends(get_db),
-    current_user:       HRUser  = Depends(get_current_user)
-):
-    get_provider_svc(provider)
-
-    query = db.query(Email).filter(Email.provider == provider)
-
-    if search:
-        query = query.filter(
-            or_(
-                Email.candidate_name.ilike(f"%{search}%"),
-                Email.subject.ilike(f"%{search}%"),
-                Email.candidate_email.ilike(f"%{search}%")
-            )
-        )
-
-    if is_job_application is not None:
-        query = query.filter(Email.is_job_application == is_job_application)
-
-    total = query.count()
-
-    if get_all:
-        emails    = query.order_by(Email.id.desc()).all()
-        page      = 1
-        page_size = total
-    else:
-        emails = query.order_by(Email.id.desc()) \
-                      .offset((page - 1) * page_size) \
-                      .limit(page_size).all()
-
-    result = []
-    for email in emails:
-        atts = db.query(Attachment).filter_by(email_id=email.id).all()
-        formatted = format_email_datetime(email.received_at, email.date)
-        result.append(
-            {
-                "id": email.id,
-                "email_id": email.email_id,
-                "provider": email.provider,
-                "candidate_name": email.candidate_name,
-                "candidate_email": email.candidate_email,
-                "subject": email.subject,
-                "date": formatted["date"],     
-                "time": formatted["time"],    
-                "job_position": email.job_position,
-                "has_attachments": email.has_attachments,
-                "attachments": [
-                    {
-                        "id": a.id,
-                        "filename": a.filename,
-                        "file_type": a.file_type,
-                        "file_size": a.file_size,
-                    }
-                    for a in atts
-                ],
-            }
-        )
-    return {
-        "provider":  provider,
-        "total":     len(result),
-        "page":      page,
-        "page_size": page_size,
-        "emails":    result
-    }
-
 
 @router.get("/{provider}/emails/{email_id}")
 def get_email(
@@ -428,3 +353,4 @@ def manual_sync(
         )
     count = svc.fetch_and_store_emails(current_user, db)
     return {"message": f"Synced {count} new emails"}
+
