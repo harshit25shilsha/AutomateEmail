@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 import services.gmail_service as gmail_svc
 import services.outlook_service as outlook_svc
 from database.db import get_db
+from models.attachment_activity import AttachmentActivity
 from models.attachment_model import Attachment
-from models.attachment_view import AttachmentView
 from models.email_model import Email
 from models.hr_user import HRUser
 from routers.auth import get_current_user
@@ -61,47 +61,51 @@ def get_email_ordering():
     )
 
 
-def load_attachment_view_metadata(
+def load_attachment_activity_metadata(
     db: Session,
     attachment_ids: list[int],
     current_user_id: int,
-) -> tuple[dict[int, object], dict[int, int]]:
+) -> tuple[dict[int, object], dict[int, int], dict[int, object], dict[int, int]]:
     if not attachment_ids:
-        return {}, {}
+        return {}, {}, {}, {}
 
-    user_views = (
-        db.query(AttachmentView)
-        .filter(
-            AttachmentView.hr_user_id == current_user_id,
-            AttachmentView.attachment_id.in_(attachment_ids),
-        )
+    activities = (
+        db.query(AttachmentActivity)
+        .filter(AttachmentActivity.attachment_id.in_(attachment_ids))
         .all()
     )
-    user_view_map = {view.attachment_id: view.viewed_at for view in user_views}
 
-    view_counts_rows = (
-        db.query(
-            AttachmentView.attachment_id,
-            func.count(AttachmentView.id).label("view_count"),
-        )
-        .filter(AttachmentView.attachment_id.in_(attachment_ids))
-        .group_by(AttachmentView.attachment_id)
-        .all()
-    )
-    view_count_map = {
-        row.attachment_id: row.view_count
-        for row in view_counts_rows
+    user_view_map = {
+        activity.attachment_id: activity.viewed_at
+        for activity in activities
+        if activity.hr_user_id == current_user_id and activity.viewed_at is not None
+    }
+    user_download_map = {
+        activity.attachment_id: activity.downloaded_at
+        for activity in activities
+        if activity.hr_user_id == current_user_id and activity.downloaded_at is not None
     }
 
-    return user_view_map, view_count_map
+    view_count_map = {}
+    download_count_map = {}
+    for activity in activities:
+        if activity.viewed_at is not None:
+            view_count_map[activity.attachment_id] = view_count_map.get(activity.attachment_id, 0) + 1
+        if activity.downloaded_at is not None:
+            download_count_map[activity.attachment_id] = download_count_map.get(activity.attachment_id, 0) + 1
+
+    return user_view_map, view_count_map, user_download_map, download_count_map
 
 
 def build_attachment_payload(
     attachment: Attachment,
     user_view_map: dict[int, object],
     view_count_map: dict[int, int],
+    user_download_map: dict[int, object],
+    download_count_map: dict[int, int],
 ):
     viewed_at = user_view_map.get(attachment.id)
+    downloaded_at = user_download_map.get(attachment.id)
     return {
         "id": attachment.id,
         "filename": attachment.filename,
@@ -110,7 +114,75 @@ def build_attachment_payload(
         "is_viewed": viewed_at is not None,
         "viewed_at": viewed_at,
         "view_count": view_count_map.get(attachment.id, 0),
+        "is_downloaded": downloaded_at is not None,
+        "downloaded_at": downloaded_at,
+        "download_count": download_count_map.get(attachment.id, 0),
     }
+
+
+def mark_attachment_viewed(db: Session, attachment_id: int, current_user_id: int) -> None:
+    activity = (
+        db.query(AttachmentActivity)
+        .filter(
+            AttachmentActivity.attachment_id == attachment_id,
+            AttachmentActivity.hr_user_id == current_user_id,
+        )
+        .first()
+    )
+
+    if activity:
+        if activity.viewed_at is None:
+            activity.viewed_at = func.now()
+            db.commit()
+        return
+
+    db.add(
+        AttachmentActivity(
+            attachment_id=attachment_id,
+            hr_user_id=current_user_id,
+            viewed_at=func.now(),
+        )
+    )
+    db.commit()
+
+
+def mark_attachments_downloaded(
+    db: Session,
+    attachment_ids: list[int],
+    current_user_id: int,
+) -> None:
+    if not attachment_ids:
+        return
+
+    existing_rows = {
+        row.attachment_id: row
+        for row in db.query(AttachmentActivity)
+        .filter(
+            AttachmentActivity.hr_user_id == current_user_id,
+            AttachmentActivity.attachment_id.in_(attachment_ids),
+        )
+        .all()
+    }
+
+    new_rows = []
+    for attachment_id in attachment_ids:
+        existing_row = existing_rows.get(attachment_id)
+        if existing_row:
+            if existing_row.downloaded_at is None:
+                existing_row.downloaded_at = func.now()
+            continue
+
+        new_rows.append(
+            AttachmentActivity(
+                attachment_id=attachment_id,
+                hr_user_id=current_user_id,
+                downloaded_at=func.now(),
+            )
+        )
+
+    if new_rows:
+        db.add_all(new_rows)
+    db.commit()
 
 
 @router.get("/{provider}/status", response_model=MessageResponse)
@@ -178,7 +250,7 @@ def get_emails(
         attachments_by_email.setdefault(att.email_id, []).append(att)
 
     attachment_ids = [att.id for att in attachments]
-    user_view_map, view_count_map = load_attachment_view_metadata(
+    user_view_map, view_count_map, user_download_map, download_count_map = load_attachment_activity_metadata(
         db,
         attachment_ids,
         current_user.id,
@@ -201,7 +273,13 @@ def get_emails(
                 "job_position": email.job_position,
                 "has_attachments": email.has_attachments,
                 "attachments": [
-                    build_attachment_payload(a, user_view_map, view_count_map)
+                    build_attachment_payload(
+                        a,
+                        user_view_map,
+                        view_count_map,
+                        user_download_map,
+                        download_count_map,
+                    )
                     for a in atts
                 ],
 
@@ -249,9 +327,15 @@ def get_all_emails_with_details(
     db:                 Session       = Depends(get_db),
     current_user:       HRUser        = Depends(get_current_user)
 ):
-    get_provider_svc(provider)
+    provider_value = provider.value
+    svc = get_provider_svc(provider_value)
+    if not svc.is_authenticated(current_user):
+        raise HTTPException(
+            status_code=401,
+            detail=f"{provider_value.capitalize()} not connected.",
+        )
 
-    query = db.query(Email).filter(Email.provider == provider)
+    query = db.query(Email).filter(Email.provider == provider_value)
 
     if search:
         query = query.filter(
@@ -270,7 +354,7 @@ def get_all_emails_with_details(
         all_positions = (
             db.query(Email.job_position)
             .filter(
-                Email.provider == provider,
+                Email.provider == provider_value,
                 Email.job_position.isnot(None),
                 Email.job_position != ""
             )
@@ -285,7 +369,7 @@ def get_all_emails_with_details(
 
         if not matched_positions:
             return {
-                "provider":  provider,
+                "provider":  provider_value,
                 "total":     0,
                 "page":      page,
                 "page_size": page_size,
@@ -335,9 +419,25 @@ def get_all_emails_with_details(
                       .offset((page - 1) * page_size) \
                       .limit(page_size).all()
 
+    email_ids = [email.id for email in emails]
+    attachments = []
+    if email_ids:
+        attachments = db.query(Attachment).filter(Attachment.email_id.in_(email_ids)).all()
+
+    attachments_by_email = {}
+    for att in attachments:
+        attachments_by_email.setdefault(att.email_id, []).append(att)
+
+    attachment_ids = [att.id for att in attachments]
+    user_view_map, view_count_map, user_download_map, download_count_map = load_attachment_activity_metadata(
+        db,
+        attachment_ids,
+        current_user.id,
+    )
+
     result = []
     for email in emails:
-        atts      = db.query(Attachment).filter_by(email_id=email.id).all()
+        atts = attachments_by_email.get(email.id, [])
         formatted = format_email_datetime(email.received_at, email.date)
         result.append(
             {
@@ -352,19 +452,20 @@ def get_all_emails_with_details(
                 "job_position":    email.job_position,
                 "has_attachments": email.has_attachments,
                 "attachments": [
-                    {
-                        "id":        a.id,
-                        "filename":  a.filename,
-                        "file_type": a.file_type,
-                        "file_size": a.file_size,
-                    }
+                    build_attachment_payload(
+                        a,
+                        user_view_map,
+                        view_count_map,
+                        user_download_map,
+                        download_count_map,
+                    )
                     for a in atts
                 ],
             }
         )
 
     return {
-        "provider":  provider,
+        "provider":  provider_value,
         "total":     total,
         "page":      page,
         "page_size": page_size,
@@ -386,12 +487,18 @@ def get_job_categories(
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
-    get_provider_svc(provider)
+    provider_value = provider.value
+    svc = get_provider_svc(provider_value)
+    if not svc.is_authenticated(current_user):
+        raise HTTPException(
+            status_code=401,
+            detail=f"{provider_value.capitalize()} not connected.",
+        )
 
     rows = (
         db.query(Email.job_position)
         .filter(
-            Email.provider == provider,
+            Email.provider == provider_value,
             Email.is_job_application == True,
             Email.job_position.isnot(None),
             Email.job_position != ""
@@ -415,7 +522,7 @@ def get_job_categories(
     sorted_categories = sorted(groups.values(), key=lambda x: x["category"])
 
     return {
-        "provider":   provider,
+        "provider":   provider_value,
         "categories": sorted_categories
     }
 
@@ -425,12 +532,18 @@ def get_job_positions(
     db:           Session = Depends(get_db),
     current_user: HRUser  = Depends(get_current_user)
 ):
-    get_provider_svc(provider)
+    provider_value = provider.value
+    svc = get_provider_svc(provider_value)
+    if not svc.is_authenticated(current_user):
+        raise HTTPException(
+            status_code=401,
+            detail=f"{provider_value.capitalize()} not connected.",
+        )
 
     rows = (
         db.query(Email.job_position)
         .filter(
-            Email.provider == provider,
+            Email.provider == provider_value,
             Email.is_job_application == True,
             Email.job_position.isnot(None),
             Email.job_position != ""
@@ -441,7 +554,7 @@ def get_job_positions(
 
     positions = sorted([r.job_position for r in rows])
     return {
-        "provider":      provider,
+        "provider":      provider_value,
         "job_positions": positions
     }
 
@@ -469,7 +582,7 @@ def get_email(
 
     atts = db.query(Attachment).filter_by(email_id=email.id).all()
     attachment_ids = [att.id for att in atts]
-    user_view_map, view_count_map = load_attachment_view_metadata(
+    user_view_map, view_count_map, user_download_map, download_count_map = load_attachment_activity_metadata(
         db,
         attachment_ids,
         current_user.id,
@@ -486,7 +599,13 @@ def get_email(
         "date": formatted["date"],
         "attachments": [
             {
-                **build_attachment_payload(a, user_view_map, view_count_map),
+                **build_attachment_payload(
+                    a,
+                    user_view_map,
+                    view_count_map,
+                    user_download_map,
+                    download_count_map,
+                ),
                 "view_url": f"/email/{provider_value}/attachments/{a.id}/view",
                 "download_url": f"/email/{provider_value}/attachments/{a.id}/download",
             }
@@ -523,23 +642,7 @@ def view_attachment(
     if not att or not os.path.exists(att.file_path):
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    existing_view = (
-        db.query(AttachmentView)
-        .filter(
-            AttachmentView.attachment_id == att.id,
-            AttachmentView.hr_user_id == current_user.id,
-        )
-        .first()
-    )
-
-    if not existing_view:
-        db.add(
-            AttachmentView(
-                attachment_id=att.id,
-                hr_user_id=current_user.id,
-            )
-        )
-        db.commit()
+    mark_attachment_viewed(db, att.id, current_user.id)
 
     return FileResponse(att.file_path, filename=att.filename)
 
@@ -582,6 +685,8 @@ def download_attachment(
     if not att or not os.path.exists(att.file_path):
         raise HTTPException(status_code=404, detail="Attachment not found")
 
+    mark_attachments_downloaded(db, [att.id], current_user.id)
+
     return FileResponse(
         att.file_path,
         filename=att.filename,
@@ -616,6 +721,7 @@ def download_multiple(
             detail=f"{provider_value.capitalize()} not connected.",
         )
 
+    downloaded_attachment_ids = []
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for att_id in data.attachment_ids:
@@ -630,6 +736,9 @@ def download_multiple(
             )
             if att and os.path.exists(att.file_path):
                 zf.write(att.file_path, att.filename)
+                downloaded_attachment_ids.append(att.id)
+
+    mark_attachments_downloaded(db, downloaded_attachment_ids, current_user.id)
 
     zip_buffer.seek(0)
     return StreamingResponse(
@@ -671,11 +780,15 @@ def download_all(
         .all()
     )
 
+    downloaded_attachment_ids = []
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for att in atts:
             if os.path.exists(att.file_path):
                 zf.write(att.file_path, att.filename)
+                downloaded_attachment_ids.append(att.id)
+
+    mark_attachments_downloaded(db, downloaded_attachment_ids, current_user.id)
 
     zip_buffer.seek(0)
     return StreamingResponse(
