@@ -26,6 +26,9 @@ class AttachmentSchema(BaseModel):
     is_viewed: bool = False
     viewed_at: Optional[datetime] = None
     view_count: int = 0
+    is_downloaded: bool = False
+    downloaded_at: Optional[datetime] = None
+    download_count: int = 0
 
     class Config:
         from_attributes = True
