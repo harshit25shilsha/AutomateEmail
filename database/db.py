@@ -3,12 +3,14 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 import os
+
 load_dotenv()
 
-DATABASE_URL  = os.getenv("DATABASE_URL")
-engine        = create_engine(DATABASE_URL)
-SessionLocal  = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base          = declarative_base()
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
 
 def get_db():
     db = SessionLocal()
@@ -17,11 +19,14 @@ def get_db():
     finally:
         db.close()
 
+
 def create_tables():
     from models.hr_user import HRUser
-    from models.email_model      import Email
+    from models.email_model import Email
     from models.attachment_model import Attachment
+    from models.attachment_view import AttachmentView
     from models.employee import Employee
+
     Base.metadata.create_all(bind=engine)
     ensure_email_received_at_column()
 

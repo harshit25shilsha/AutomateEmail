@@ -1,4 +1,3 @@
-# routers/email_router.py
 import io
 import os
 import zipfile
@@ -13,6 +12,7 @@ import services.gmail_service as gmail_svc
 import services.outlook_service as outlook_svc
 from database.db import get_db
 from models.attachment_model import Attachment
+from models.attachment_view import AttachmentView
 from models.email_model import Email
 from models.hr_user import HRUser
 from routers.auth import get_current_user
@@ -59,6 +59,58 @@ def get_email_ordering():
         Email.received_at.desc(),
         Email.id.desc(),
     )
+
+
+def load_attachment_view_metadata(
+    db: Session,
+    attachment_ids: list[int],
+    current_user_id: int,
+) -> tuple[dict[int, object], dict[int, int]]:
+    if not attachment_ids:
+        return {}, {}
+
+    user_views = (
+        db.query(AttachmentView)
+        .filter(
+            AttachmentView.hr_user_id == current_user_id,
+            AttachmentView.attachment_id.in_(attachment_ids),
+        )
+        .all()
+    )
+    user_view_map = {view.attachment_id: view.viewed_at for view in user_views}
+
+    view_counts_rows = (
+        db.query(
+            AttachmentView.attachment_id,
+            func.count(AttachmentView.id).label("view_count"),
+        )
+        .filter(AttachmentView.attachment_id.in_(attachment_ids))
+        .group_by(AttachmentView.attachment_id)
+        .all()
+    )
+    view_count_map = {
+        row.attachment_id: row.view_count
+        for row in view_counts_rows
+    }
+
+    return user_view_map, view_count_map
+
+
+def build_attachment_payload(
+    attachment: Attachment,
+    user_view_map: dict[int, object],
+    view_count_map: dict[int, int],
+):
+    viewed_at = user_view_map.get(attachment.id)
+    return {
+        "id": attachment.id,
+        "filename": attachment.filename,
+        "file_type": attachment.file_type,
+        "file_size": attachment.file_size,
+        "is_viewed": viewed_at is not None,
+        "viewed_at": viewed_at,
+        "view_count": view_count_map.get(attachment.id, 0),
+    }
 
 
 @router.get("/{provider}/status", response_model=MessageResponse)
@@ -116,9 +168,25 @@ def get_emails(
             .all()
         )
 
+    email_ids = [email.id for email in emails]
+    attachments = []
+    if email_ids:
+        attachments = db.query(Attachment).filter(Attachment.email_id.in_(email_ids)).all()
+
+    attachments_by_email = {}
+    for att in attachments:
+        attachments_by_email.setdefault(att.email_id, []).append(att)
+
+    attachment_ids = [att.id for att in attachments]
+    user_view_map, view_count_map = load_attachment_view_metadata(
+        db,
+        attachment_ids,
+        current_user.id,
+    )
+
     result = []
     for email in emails:
-        atts = db.query(Attachment).filter_by(email_id=email.id).all()
+        atts = attachments_by_email.get(email.id, [])
         formatted = format_email_datetime(email.received_at, email.date)
         result.append(
             {
@@ -133,12 +201,7 @@ def get_emails(
                 "job_position": email.job_position,
                 "has_attachments": email.has_attachments,
                 "attachments": [
-                    {
-                        "id": a.id,
-                        "filename": a.filename,
-                        "file_type": a.file_type,
-                        "file_size": a.file_size,
-                    }
+                    build_attachment_payload(a, user_view_map, view_count_map)
                     for a in atts
                 ],
 
@@ -152,6 +215,246 @@ def get_emails(
         "page_size": page_size,
         "emails": result,
     }
+
+
+
+#========================================================================================================
+STOP_WORDS = {"application", "for", "the", "a", "an", "of", "in", "at"}
+
+def get_category_from_position(position: str) -> str:
+    words = position.strip().lower().split()
+    return next((w for w in words if w not in STOP_WORDS), words[0])
+
+@router.get("/{provider}/emails/all-details")
+def get_all_emails_with_details(
+    provider:           ProviderParam,
+    page:               int           = Query(default=1, ge=1),
+    page_size:          int           = Query(default=100, le=1000),
+    search: Optional[str] = Query(
+    default=None,
+    description="Search by candidate name and E-mail"),
+    get_all:            bool          = Query(default=False),
+    is_job_application: Optional[bool]= Query(default=None),
+    job_category:       Optional[str] = Query(default=None),  
+    date_from:          Optional[str] = Query(default=None),  
+    date_to:            Optional[str] = Query(default=None),  
+    has_attachments:    Optional[bool]= Query(default=None),
+    db:                 Session       = Depends(get_db),
+    current_user:       HRUser        = Depends(get_current_user)
+):
+    get_provider_svc(provider)
+
+    query = db.query(Email).filter(Email.provider == provider)
+
+    if search:
+        query = query.filter(
+            or_(
+                Email.candidate_name.ilike(f"%{search}%"),
+                Email.candidate_email.ilike(f"%{search}%")
+            )
+        )
+
+    if is_job_application is not None:
+        query = query.filter(Email.is_job_application == is_job_application)
+
+    if job_category is not None:
+        category_key = get_category_from_position(job_category)  # normalize input too
+
+        all_positions = (
+            db.query(Email.job_position)
+            .filter(
+                Email.provider == provider,
+                Email.job_position.isnot(None),
+                Email.job_position != ""
+            )
+            .distinct()
+            .all()
+        )
+        matched_positions = [
+            row.job_position
+            for row in all_positions
+            if get_category_from_position(row.job_position) == category_key  # ← fixed
+        ]
+
+        if not matched_positions:
+            return {
+                "provider":  provider,
+                "total":     0,
+                "page":      page,
+                "page_size": page_size,
+                "filters_applied": {
+                    "search":             search,
+                    "is_job_application": is_job_application,
+                    "job_category":       job_category,
+                    "date_from":          date_from,
+                    "date_to":            date_to,
+                    "has_attachments":    has_attachments,
+                },
+                "emails": []
+            }
+
+        query = query.filter(Email.job_position.in_(matched_positions))
+
+    if date_from:
+        try:
+            date_from_dt = datetime.strptime(date_from, "%Y-%m-%d")
+            query = query.filter(Email.received_at >= date_from_dt)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid date_from format. Use YYYY-MM-DD"
+            )
+
+    if date_to:
+        try:
+            date_to_dt = datetime.strptime(date_to, "%d-%m-%Y") + timedelta(days=1)
+            query = query.filter(Email.received_at < date_to_dt)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid date_to format. Use DD-MM-YYYY"
+            )
+
+    if has_attachments is not None:
+        query = query.filter(Email.has_attachments == has_attachments)
+
+    total = query.count()
+
+    if get_all:
+        emails    = query.order_by(Email.id.desc()).all()
+        page      = 1
+        page_size = total
+    else:
+        emails = query.order_by(Email.id.desc()) \
+                      .offset((page - 1) * page_size) \
+                      .limit(page_size).all()
+
+    result = []
+    for email in emails:
+        atts      = db.query(Attachment).filter_by(email_id=email.id).all()
+        formatted = format_email_datetime(email.received_at, email.date)
+        result.append(
+            {
+                "id":              email.id,
+                "email_id":        email.email_id,
+                "provider":        email.provider,
+                "candidate_name":  email.candidate_name,
+                "candidate_email": email.candidate_email,
+                "subject":         email.subject,
+                "date":            formatted["date"],
+                "time":            formatted["time"],
+                "job_position":    email.job_position,
+                "has_attachments": email.has_attachments,
+                "attachments": [
+                    {
+                        "id":        a.id,
+                        "filename":  a.filename,
+                        "file_type": a.file_type,
+                        "file_size": a.file_size,
+                    }
+                    for a in atts
+                ],
+            }
+        )
+
+    return {
+        "provider":  provider,
+        "total":     total,
+        "page":      page,
+        "page_size": page_size,
+        "filters_applied": {
+            "search":             search,
+            "is_job_application": is_job_application,
+            "job_category":       job_category,
+            "date_from":          date_from,
+            "date_to":            date_to,
+            "has_attachments":    has_attachments,
+        },
+        "emails": result
+    }
+
+
+@router.get("/{provider}/emails/job-categories")
+def get_job_categories(
+    provider:     ProviderParam,
+    db:           Session = Depends(get_db),
+    current_user: HRUser  = Depends(get_current_user)
+):
+    get_provider_svc(provider)
+
+    rows = (
+        db.query(Email.job_position)
+        .filter(
+            Email.provider == provider,
+            Email.is_job_application == True,
+            Email.job_position.isnot(None),
+            Email.job_position != ""
+        )
+        .distinct()
+        .all()
+    )
+
+    groups = {}
+    for row in rows:
+        position = row.job_position.strip()
+        key      = get_category_from_position(position)
+
+        if key not in groups:
+            groups[key] = {
+                "category":  key.capitalize(),
+                "positions": [],
+                "total":     0
+            }
+        groups[key]["positions"].append(position)
+
+    for key in groups:
+        count = (
+            db.query(func.count(Email.id))
+            .filter(
+                Email.provider == provider,
+                Email.is_job_application == True,
+                Email.job_position.in_(groups[key]["positions"])
+            )
+            .scalar()
+        )
+        groups[key]["total"] = count
+
+    sorted_categories = sorted(groups.values(), key=lambda x: x["category"])
+
+    return {
+        "provider":   provider,
+        "categories": sorted_categories
+    }
+
+
+@router.get("/{provider}/emails/job-positions")
+def get_job_positions(
+    provider:     ProviderParam,
+    db:           Session = Depends(get_db),
+    current_user: HRUser  = Depends(get_current_user)
+):
+    get_provider_svc(provider)
+
+    rows = (
+        db.query(Email.job_position)
+        .filter(
+            Email.provider == provider,
+            Email.is_job_application == True,
+            Email.job_position.isnot(None),
+            Email.job_position != ""
+        )
+        .distinct()
+        .all()
+    )
+
+    positions = sorted([r.job_position for r in rows])
+    return {
+        "provider":      provider,
+        "job_positions": positions
+    }
+
+
+#===========================================================================================================
 
 @router.get("/{provider}/emails/{email_id}")
 def get_email(
@@ -173,6 +476,13 @@ def get_email(
         raise HTTPException(status_code=404, detail="Email not found")
 
     atts = db.query(Attachment).filter_by(email_id=email.id).all()
+    attachment_ids = [att.id for att in atts]
+    user_view_map, view_count_map = load_attachment_view_metadata(
+        db,
+        attachment_ids,
+        current_user.id,
+    )
+
     formatted = format_email_datetime(email.received_at, email.date)
 
     return {
@@ -184,10 +494,7 @@ def get_email(
         "date": formatted["date"],
         "attachments": [
             {
-                "id": a.id,
-                "filename": a.filename,
-                "file_type": a.file_type,
-                "file_size": a.file_size,
+                **build_attachment_payload(a, user_view_map, view_count_map),
                 "view_url": f"/email/{provider_value}/attachments/{a.id}/view",
                 "download_url": f"/email/{provider_value}/attachments/{a.id}/download",
             }
@@ -211,9 +518,37 @@ def view_attachment(
             detail=f"{provider_value.capitalize()} not connected.",
         )
 
-    att = db.query(Attachment).filter_by(id=att_id).first()
+    att = (
+        db.query(Attachment)
+        .join(Email, Email.id == Attachment.email_id)
+        .filter(
+            Attachment.id == att_id,
+            Email.provider == provider_value,
+        )
+        .first()
+    )
+
     if not att or not os.path.exists(att.file_path):
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    existing_view = (
+        db.query(AttachmentView)
+        .filter(
+            AttachmentView.attachment_id == att.id,
+            AttachmentView.hr_user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not existing_view:
+        db.add(
+            AttachmentView(
+                attachment_id=att.id,
+                hr_user_id=current_user.id,
+            )
+        )
+        db.commit()
+
     return FileResponse(att.file_path, filename=att.filename)
 
 
@@ -243,9 +578,18 @@ def download_attachment(
             detail=f"{provider_value.capitalize()} not connected.",
         )
 
-    att = db.query(Attachment).filter_by(id=att_id).first()
+    att = (
+        db.query(Attachment)
+        .join(Email, Email.id == Attachment.email_id)
+        .filter(
+            Attachment.id == att_id,
+            Email.provider == provider_value,
+        )
+        .first()
+    )
     if not att or not os.path.exists(att.file_path):
         raise HTTPException(status_code=404, detail="Attachment not found")
+
     return FileResponse(
         att.file_path,
         filename=att.filename,
@@ -283,9 +627,18 @@ def download_multiple(
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for att_id in data.attachment_ids:
-            att = db.query(Attachment).filter_by(id=att_id).first()
+            att = (
+                db.query(Attachment)
+                .join(Email, Email.id == Attachment.email_id)
+                .filter(
+                    Attachment.id == att_id,
+                    Email.provider == provider_value,
+                )
+                .first()
+            )
             if att and os.path.exists(att.file_path):
                 zf.write(att.file_path, att.filename)
+
     zip_buffer.seek(0)
     return StreamingResponse(
         zip_buffer,
@@ -325,11 +678,13 @@ def download_all(
         .filter(Email.provider == provider_value)
         .all()
     )
+
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for att in atts:
             if os.path.exists(att.file_path):
                 zf.write(att.file_path, att.filename)
+
     zip_buffer.seek(0)
     return StreamingResponse(
         zip_buffer,
@@ -351,6 +706,7 @@ def manual_sync(
             status_code=401,
             detail=f"{provider_value.capitalize()} not connected.",
         )
+
     count = svc.fetch_and_store_emails(current_user, db)
     return {"message": f"Synced {count} new emails"}
 
