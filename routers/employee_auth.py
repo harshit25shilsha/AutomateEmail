@@ -19,7 +19,7 @@ from utils.security import (
 router = APIRouter(prefix="/employee", tags=["Employee Auth"])
 
 # ── Register
-@router.post("/register", status_code=200, response_model=RegisterResponse)
+@router.post("/register", status_code=201, response_model=RegisterResponse)
 def register(payload: EmployeeRegister, db: Session = Depends(get_db)):
 
     if db.query(Employee).filter_by(email=payload.email).first():
@@ -42,7 +42,7 @@ def register(payload: EmployeeRegister, db: Session = Depends(get_db)):
 
     return {
         "success": True,
-        "status_code": 200,
+        "status_code": 201,
         "message": "Employee registered successfully",
         "data": {
             "user_id":   employee.id,
@@ -52,7 +52,7 @@ def register(payload: EmployeeRegister, db: Session = Depends(get_db)):
 
 
 # ── Login
-@router.post("/login", status_code=201, response_model=LoginResponse)
+@router.post("/login", status_code=200, response_model=LoginResponse)
 def login(payload: EmployeeLogin, db: Session = Depends(get_db)):
 
     if payload.email:
@@ -76,7 +76,7 @@ def login(payload: EmployeeLogin, db: Session = Depends(get_db)):
 
     return {
         "success": True,
-        "status_code": 201,
+        "status_code": 200,
         "message": "Login successful",
         "data": {
             "access_token": token,
