@@ -317,7 +317,7 @@ def get_all_emails_with_details(
     ),
     date_to: Optional[str] = Query(
         default=None,
-        description="Format: DD/MM/YYYY"
+        description="Format: DD/MM/YYYY "
     ),
     job_category: Optional[str] = Query(
         default=None,
@@ -516,8 +516,21 @@ def get_job_categories(
             groups[key] = {
                 "category":  key.capitalize(),
                 "positions": [],
+                "total":     0
             }
         groups[key]["positions"].append(position)
+
+    for key in groups:
+        count = (
+            db.query(func.count(Email.id))
+            .filter(
+                Email.provider == provider,
+                Email.is_job_application == True,
+                Email.job_position.in_(groups[key]["positions"])
+            )
+            .scalar()
+        )
+        groups[key]["total"] = count
 
     sorted_categories = sorted(groups.values(), key=lambda x: x["category"])
 
@@ -525,6 +538,7 @@ def get_job_categories(
         "provider":   provider_value,
         "categories": sorted_categories
     }
+
 
 @router.get("/{provider}/emails/job-positions")
 def get_job_positions(
