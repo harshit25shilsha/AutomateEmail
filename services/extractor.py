@@ -82,7 +82,6 @@ _SYSTEM_SUBJECT_PATTERNS = re.compile(
 
 
 def _is_system_email(sender_email: str, subject: str) -> bool:
-    """Return True if this looks like a platform/system email, not a human job application."""
     if sender_email and _SYSTEM_EMAIL_PATTERNS.search(sender_email):
         return True
     if subject and _SYSTEM_SUBJECT_PATTERNS.search(subject):
