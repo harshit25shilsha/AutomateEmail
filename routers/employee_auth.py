@@ -2,7 +2,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from database.db import get_db
 from models.employee import Employee, TokenBlacklist
-from schemas.employee_schema import EmployeeRegister, EmployeeLogin, EmployeeLoginResponse
+from schemas.employee_schema import (
+    EmployeeRegister, EmployeeLogin,
+    RegisterResponse, LoginResponse
+)
 from utils.security import hash_password, verify_password, create_access_token
 from fastapi.security import HTTPAuthorizationCredentials
 from utils.security import (
@@ -15,9 +18,8 @@ from utils.security import (
 
 router = APIRouter(prefix="/employee", tags=["Employee Auth"])
 
-
 # ── Register
-@router.post("/register", status_code=201)
+@router.post("/register", status_code=200, response_model=RegisterResponse)
 def register(payload: EmployeeRegister, db: Session = Depends(get_db)):
 
     if db.query(Employee).filter_by(email=payload.email).first():
@@ -39,15 +41,18 @@ def register(payload: EmployeeRegister, db: Session = Depends(get_db)):
     db.refresh(employee)
 
     return {
-        "message":   "Employee registered successfully",
-        "user_id":   employee.id,
-        "user_type": employee.user_type
+        "success": True,
+        "status_code": 200,
+        "message": "Employee registered successfully",
+        "data": {
+            "user_id":   employee.id,
+            "user_type": employee.user_type
+        }
     }
 
 
 # ── Login
-
-@router.post("/login", response_model=EmployeeLoginResponse)
+@router.post("/login", status_code=201, response_model=LoginResponse)
 def login(payload: EmployeeLogin, db: Session = Depends(get_db)):
 
     if payload.email:
@@ -70,12 +75,17 @@ def login(payload: EmployeeLogin, db: Session = Depends(get_db)):
     })
 
     return {
-        "access_token": token,
-        "token_type":   "bearer",
-        "user_id":      employee.id,
-        "email":        employee.email,
-        "name":         employee.name,
-        "user_type":    employee.user_type
+        "success": True,
+        "status_code": 201,
+        "message": "Login successful",
+        "data": {
+            "access_token": token,
+            "token_type":   "bearer",
+            "user_id":      employee.id,
+            "email":        employee.email,
+            "name":         employee.name,
+            "user_type":    employee.user_type
+        }
     }
 
 

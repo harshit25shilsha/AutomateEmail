@@ -52,12 +52,40 @@ class EmployeeLogin(BaseModel):
         if len(v) != 10:
             raise ValueError("Mobile number must be exactly 10 digits")
         return v
-    
-  
-class EmployeeLoginResponse(BaseModel):
+
+
+# ── Response Schemas
+
+class EmployeeLoginResponse(BaseModel):     
     access_token: str
     token_type:   str
     user_id:      int
     email:        str
     name:         str
-    user_type:    str         
+    user_type:    str
+
+
+class RegisterData(BaseModel):
+    user_id:   int
+    user_type: str
+
+class RegisterResponse(BaseModel):
+    success: bool
+    status_code: int
+    message: str
+    data:    RegisterData
+
+
+class LoginData(BaseModel):
+    access_token: str
+    token_type:   str
+    user_id:      int
+    email:        str
+    name:         str
+    user_type:    str
+
+class LoginResponse(BaseModel):
+    success: bool
+    status_code: int
+    message: str
+    data:    LoginData
