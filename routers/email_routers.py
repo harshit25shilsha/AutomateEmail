@@ -308,7 +308,7 @@ def get_all_emails_with_details(
     page_size:          int           = Query(default=100, le=1000),
     search: Optional[str] = Query(
     default=None,
-    description="Search by candidate name and E-mail"),
+    description="Search by candidate name, E-mail and Subject"),
     get_all:            bool          = Query(default=False),
     is_job_application: Optional[bool]= Query(default=None),
     date_from: Optional[str] = Query(
@@ -341,7 +341,8 @@ def get_all_emails_with_details(
         query = query.filter(
             or_(
                 Email.candidate_name.ilike(f"%{search}%"),
-                Email.candidate_email.ilike(f"%{search}%")
+                Email.candidate_email.ilike(f"%{search}%"),
+                Email.subject.ilike(f"%{search}%")
             )
         )
 
