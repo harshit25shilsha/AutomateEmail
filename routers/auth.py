@@ -22,16 +22,22 @@ load_dotenv()
 router        = APIRouter(prefix="/auth", tags=["Auth"])
 oauth2_scheme = HTTPBearer()
 
-GMAIL_SCOPES      = ['https://www.googleapis.com/auth/gmail.readonly',
-                     'https://www.googleapis.com/auth/userinfo.email',
-                     'https://www.googleapis.com/auth/userinfo.profile',
-                     'openid']
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "openid",
+]
 CREDENTIALS_FILE  = 'credentials.json'
 OUTLOOK_CLIENT_ID = os.getenv("OUTLOOK_CLIENT_ID")
 OUTLOOK_TENANT    = "consumers"
-OUTLOOK_SCOPES    = ["https://graph.microsoft.com/Mail.Read",
-                     "https://graph.microsoft.com/Mail.ReadBasic",
-                     "User.Read"]
+OUTLOOK_SCOPES = [
+    "https://graph.microsoft.com/Mail.Read",
+    "https://graph.microsoft.com/Mail.ReadBasic",
+    "https://graph.microsoft.com/Mail.Send",
+    "User.Read",
+]
 
 
 # ── Gmail Login/Register

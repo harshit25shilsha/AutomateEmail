@@ -4,6 +4,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from email.header import decode_header
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 from models.email_model      import Email
@@ -12,9 +14,11 @@ from models.hr_user          import HRUser
 from utils.date_utils        import parse_email_datetime
 from utils.security          import decrypt_token
 from services.extractor         import extract_email_data       
-from services.attachment_reader import process_attachment     
+from services.attachment_reader import process_attachment      
 
-SCOPES         = ['https://www.googleapis.com/auth/gmail.readonly']
+
+SCOPES         = ['https://www.googleapis.com/auth/gmail.readonly',
+                  'https://www.googleapis.com/auth/gmail.send']
 ATTACHMENT_DIR = 'attachments/gmail'
 
 
@@ -100,6 +104,32 @@ def _save_attachment(service, msg_id, part):
         "file_size": len(data),
         "file_type": ext
     }
+
+
+# Gmail Send Helper
+def send_email(
+        hr_user: HRUser,db: Session, subject: str,
+        body: str, to_email: str,
+        bcc_emails : list[str] | None = None,
+        is_html: bool = False
+):
+    service = get_service(hr_user, db)
+    msg = MIMEMultipart()
+    msg["to"] = to_email
+    if bcc_emails:
+        msg["bcc"] = ", ".join(sorted(set(bcc_emails)))
+    msg["subject"] = subject
+
+    subtype = "html" if is_html else "plain"
+    msg.attach(MIMEText(body, subtype, "utf-8"))
+
+    raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+
+    return service.users().messages().send(
+        userId="me",
+        body={"raw": raw_message}
+    ).execute()
+
 
 
 # ── Fetch & Store Emails ──────────────────────────────────────
