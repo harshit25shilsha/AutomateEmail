@@ -21,6 +21,12 @@ SCOPES         = ["https://graph.microsoft.com/Mail.Read",
 ATTACHMENT_DIR = "attachments/outlook"
 
 
+class OutlookSendError(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.user_message = message
+
+
 # ── Get Token From DB ─────────────────────────────────────────
 def get_access_token(hr_user: HRUser, db: Session):
     if not hr_user.access_token:
@@ -129,14 +135,36 @@ def send_email(
             for email in sorted(set(bcc_emails))
         ]
 
-    resp = requests.post(
-        "https://graph.microsoft.com/v1.0/me/sendMail",
-        headers=headers,
-        json=payload,
-        timeout=30,
-    )
+    try:
+        resp = requests.post(
+            "https://graph.microsoft.com/v1.0/me/sendMail",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise OutlookSendError(
+            "Unable to reach Outlook right now. Please try again."
+        ) from exc
+
     if resp.status_code not in (202, 200):
-        raise Exception(f"Outlook send failed: {resp.text}")
+        error_code = ""
+        error_message = ""
+        try:
+            error_payload = resp.json().get("error", {})
+            error_code = (error_payload.get("code") or "").strip()
+            error_message = (error_payload.get("message") or "").strip()
+        except Exception:
+            error_message = resp.text.strip()
+
+        if error_code == "ErrorAccountSuspend" or "Account suspended" in error_message:
+            raise OutlookSendError(
+                "Outlook account needs verification. Please open Outlook in the browser, complete the security prompt, and try again."
+            )
+
+        raise OutlookSendError(
+            f"Outlook send failed: {error_message or resp.text.strip() or 'Unknown error'}"
+        )
 
     return {"status": "sent"}
 

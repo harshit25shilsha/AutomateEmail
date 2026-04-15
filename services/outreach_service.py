@@ -18,6 +18,8 @@ PROVIDER_SENDERS = {
     "outlook": outlook_svc.send_email,
 }
 
+OutlookSendError = getattr(outlook_svc, "OutlookSendError", Exception)
+
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
