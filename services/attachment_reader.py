@@ -11,7 +11,6 @@ from docx import Document
 SUPPORTED_TYPES = ["pdf", "docx", "xlsx"]
 
 
-# ── PDF Reader ────────────────────────────────────────────────
 def read_pdf(file_path):
     text = ""
     try:
@@ -50,7 +49,6 @@ def read_pdf(file_path):
         return ""
 
 
-# ── Word Reader ───────────────────────────────────────────────
 def read_word(file_path):
     text = ""
     try:
@@ -73,7 +71,6 @@ def read_word(file_path):
         return ""
 
 
-# ── Excel Reader ──────────────────────────────────────────────
 def read_excel(file_path):
     text = ""
     try:
@@ -96,7 +93,6 @@ def read_excel(file_path):
         return ""
 
 
-# ── Excel Summary ─────────────────────────────────────────────
 def get_excel_summary(file_path):
     summary = {}
     try:
@@ -117,7 +113,6 @@ def get_excel_summary(file_path):
         return {}
 
 
-# ── Read Any Attachment ───────────────────────────────────────
 def read_attachment(file_path: str) -> str:
     ext = file_path.split(".")[-1].lower()
     if ext not in SUPPORTED_TYPES:
@@ -144,7 +139,6 @@ def extract_from_attachment_text(text: str) -> dict:
     if not text:
         return result
 
-    # ── Phone number ──────────────────────────────────────────
     phone_match = re.search(
         r'(\+?\d{1,3}[\s\-]?)?(\(?\d{3}\)?[\s\-]?)(\d{3}[\s\-]?\d{4})',
         text
@@ -152,21 +146,18 @@ def extract_from_attachment_text(text: str) -> dict:
     if phone_match:
         result["phone"] = phone_match.group(0).strip()
 
-    # ── LinkedIn ──────────────────────────────────────────────
     linkedin_match = re.search(
         r'linkedin\.com/in/([A-Za-z0-9\-_]+)', text, re.IGNORECASE
     )
     if linkedin_match:
         result["linkedin"] = f"https://linkedin.com/in/{linkedin_match.group(1)}"
 
-    # ── GitHub ────────────────────────────────────────────────
     github_match = re.search(
         r'github\.com/([A-Za-z0-9\-_]+)', text, re.IGNORECASE
     )
     if github_match:
         result["github"] = f"https://github.com/{github_match.group(1)}"
 
-    # ── Skills ────────────────────────────────────────────────
     skill_keywords = [
         "python", "java", "javascript", "typescript", "react", "node",
         "angular", "vue", "flutter", "django", "fastapi", "flask",
@@ -184,7 +175,6 @@ def extract_from_attachment_text(text: str) -> dict:
             found_skills.append(skill.title())
     result["skills"] = found_skills
 
-    # ── Years of Experience ───────────────────────────────────
     exp_match = re.search(
         r'(\d+)\+?\s*(?:years?|yrs?)[\s\w]*(?:of\s+)?experience',
         text, re.IGNORECASE
@@ -193,8 +183,6 @@ def extract_from_attachment_text(text: str) -> dict:
         result["experience"] = f"{exp_match.group(1)} years"
 
     return result
-
-
 
 def process_attachment(file_path: str) -> dict:
     text            = read_attachment(file_path)
