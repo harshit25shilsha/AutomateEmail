@@ -347,7 +347,8 @@ def get_all_emails_with_details(
         query = query.filter(
             or_(
                 Email.candidate_name.ilike(f"%{search}%"),
-                Email.candidate_email.ilike(f"%{search}%")
+                Email.candidate_email.ilike(f"%{search}%"),
+                Email.subject.ilike(f"%{search}%")
             )
         )
 
