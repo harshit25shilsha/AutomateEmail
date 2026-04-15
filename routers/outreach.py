@@ -19,7 +19,7 @@ PROVIDER_AUTH = {
 }
 
 
-@router.post("/send", response_model=OutreachSendResponse)
+@router.post("/send", response_model=OutreachSendResponse, description="Send outreach emails to candidates based on specified mode and filters., Modes: single (specific candidates), multiple (filtered candidates), all (all candidates).")
 def send_outreach(
     payload: OutreachSendRequest,
     background_tasks: BackgroundTasks,
