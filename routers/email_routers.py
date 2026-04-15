@@ -308,7 +308,9 @@ def get_all_emails_with_details(
     page_size:          int           = Query(default=100, le=1000),
     search: Optional[str] = Query(
     default=None,
-    description="Search by candidate name, E-mail and Subject"),
+    description="Search by candidate name and E-mail"),
+    subject: Optional[str] = Query(default=None,
+                                   description="Search by subject"),
     get_all:            bool          = Query(default=False),
     is_job_application: Optional[bool]= Query(default=None),
     date_from: Optional[str] = Query(
@@ -336,6 +338,10 @@ def get_all_emails_with_details(
         )
 
     query = db.query(Email).filter(Email.provider == provider_value)
+
+    if subject:
+        query = query.filter(Email.subject.ilike(f"%{subject}%"))
+
 
     if search:
         query = query.filter(
@@ -381,6 +387,7 @@ def get_all_emails_with_details(
                     "date_from":          date_from,
                     "date_to":            date_to,
                     "has_attachments":    has_attachments,
+                    "subject":            subject,
                 },
                 "emails": []
             }
@@ -477,6 +484,7 @@ def get_all_emails_with_details(
             "date_from":          date_from,
             "date_to":            date_to,
             "has_attachments":    has_attachments,
+            "subject":            subject,
         },
         "emails": result
     }
