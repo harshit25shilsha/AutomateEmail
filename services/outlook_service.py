@@ -16,7 +16,8 @@ load_dotenv()
 CLIENT_ID      = os.getenv("OUTLOOK_CLIENT_ID")
 TENANT_ID      = "consumers"
 SCOPES         = ["https://graph.microsoft.com/Mail.Read",
-                  "https://graph.microsoft.com/Mail.ReadBasic"]
+                  "https://graph.microsoft.com/Mail.ReadBasic",
+                  "https://graph.microsoft.com/Mail.Send"]
 ATTACHMENT_DIR = "attachments/outlook"
 
 
@@ -89,6 +90,55 @@ def _save_attachment(token, message_id):
                 "file_type": ext
             })
     return attachments
+
+
+# Outlook Send Helper
+
+def send_email(
+    hr_user: HRUser,
+    db: Session,
+    subject: str,
+    body: str,
+    to_email: str,
+    bcc_emails: list[str] | None = None,
+    is_html: bool = False,
+):
+    token = get_access_token(hr_user, db)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "message": {
+            "subject": subject,
+            "body": {
+                "contentType": "HTML" if is_html else "Text",
+                "content": body,
+            },
+            "toRecipients": [
+                {"emailAddress": {"address": to_email}}
+            ],
+        },
+        "saveToSentItems": True,
+    }
+
+    if bcc_emails:
+        payload["message"]["bccRecipients"] = [
+            {"emailAddress": {"address": email}}
+            for email in sorted(set(bcc_emails))
+        ]
+
+    resp = requests.post(
+        "https://graph.microsoft.com/v1.0/me/sendMail",
+        headers=headers,
+        json=payload,
+        timeout=30,
+    )
+    if resp.status_code not in (202, 200):
+        raise Exception(f"Outlook send failed: {resp.text}")
+
+    return {"status": "sent"}
 
 
 # ── Fetch & Store Emails ──────────────────────────────────────
