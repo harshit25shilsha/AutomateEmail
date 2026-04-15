@@ -6,7 +6,9 @@ from routers import auth
 from routers.email_routers import router as email_routers
 from routers.outreach import router as outreach_router
 from routers.employee_auth import router as employee_router  
-from models.employee import Employee                          
+from models.employee import Employee  
+from routers.resume_router import router as resume_router
+
 
 
 app = FastAPI(
@@ -32,8 +34,8 @@ def startup():
 
 app.include_router(auth.router)
 app.include_router(email_routers)
-app.include_router(outreach_router)
-app.include_router(employee_router)                      
+app.include_router(employee_router)  
+app.include_router(resume_router)                    
 
 
 @app.get("/")
