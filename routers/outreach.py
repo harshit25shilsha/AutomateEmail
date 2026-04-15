@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database.db import get_db
@@ -22,7 +22,6 @@ PROVIDER_AUTH = {
 @router.post("/send", response_model=OutreachSendResponse, description="Send outreach emails to candidates based on specified mode and filters., Modes: single (specific candidates), multiple (filtered candidates), all (all candidates).")
 def send_outreach(
     payload: OutreachSendRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: HRUser = Depends(get_current_user),
 ):
@@ -45,20 +44,23 @@ def send_outreach(
         raise HTTPException(status_code=400, detail=str(exc))
 
     batch_id = str(uuid.uuid4())
-    background_tasks.add_task(
-        deliver_outreach_message,
-        current_user.id,
-        payload.mode.value,
-        payload.subject,
-        payload.body,
-        recipient_emails,
-        payload.is_html,
-    )
+
+    try:
+        deliver_outreach_message(
+            hr_user_id=current_user.id,
+            delivery_mode=payload.mode.value,
+            subject=payload.subject,
+            body=payload.body,
+            recipient_emails=recipient_emails,
+            is_html=payload.is_html,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     return {
         "batch_id": batch_id,
-        "status": "queued",
+        "status": "sent",
         "provider": current_user.provider,
         "queued_count": len(recipient_emails),
-        "message": "Outreach email queued for delivery",
+        "message": "Outreach email sent successfully",
     }
