@@ -1,8 +1,8 @@
 # schemas/email_schema.py
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
-
+from pydantic import BaseModel, EmailStr, Field
+from typing import Optional, List, Dict, Any
+from enum import Enum
 
 # ── HR Auth ──
 class HRRegisterRequest(BaseModel):
@@ -72,3 +72,39 @@ class MessageResponse(BaseModel):
 
 class MultipleDownloadRequest(BaseModel):
     attachment_ids: List[int]         
+
+
+
+# Request and Response models for email Sending 
+
+class OutreachMode(str, Enum):
+    single = "single"
+    multiple = "multiple"
+    all = "all"
+
+class OutreachFilters(BaseModel):
+    search: Optional[str] = None
+    job_position: Optional[str] = None
+    is_job_application: Optional[bool] = None
+    has_attachments: Optional[bool] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+
+class OutreachSendRequest(BaseModel):
+    mode: OutreachMode
+    subject: str = Field(min_length=1)
+    body: str = Field(min_length=1)
+    candidate_ids: List[int] = Field(default_factory=list)
+    filters: Optional[OutreachFilters] = None
+    is_html: bool = False
+
+class OutreachRecipient(BaseModel):
+    candidate_id: int
+    email: EmailStr
+
+class OutreachSendResponse(BaseModel):
+    batch_id: str
+    status: str
+    provider: str
+    queued_count: int
+    message: str
