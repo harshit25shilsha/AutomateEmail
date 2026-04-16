@@ -1,5 +1,7 @@
 # services/outlook_service.py
 import os, json, requests, base64, re
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from msal import PublicClientApplication, SerializableTokenCache
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
@@ -112,34 +114,28 @@ def send_email(
     token = get_access_token(hr_user, db)
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
+        "Content-Type": "text/plain",
     }
 
-    payload = {
-        "message": {
-            "subject": subject,
-            "body": {
-                "contentType": "HTML" if is_html else "Text",
-                "content": body,
-            },
-            "toRecipients": [
-                {"emailAddress": {"address": to_email}}
-            ],
-        },
-        "saveToSentItems": True,
-    }
-
+    msg = MIMEMultipart()
     if bcc_emails:
-        payload["message"]["bccRecipients"] = [
-            {"emailAddress": {"address": email}}
-            for email in sorted(set(bcc_emails))
-        ]
+        msg["to"] = "Undisclosed recipients:;"
+    else:
+        msg["to"] = to_email
+    if bcc_emails:
+        msg["bcc"] = ", ".join(sorted(set(bcc_emails)))
+    msg["subject"] = subject
+
+    subtype = "html" if is_html else "plain"
+    msg.attach(MIMEText(body, subtype, "utf-8"))
+
+    raw_message = base64.b64encode(msg.as_bytes()).decode("ascii")
 
     try:
         resp = requests.post(
             "https://graph.microsoft.com/v1.0/me/sendMail",
             headers=headers,
-            json=payload,
+            data=raw_message,
             timeout=30,
         )
     except requests.RequestException as exc:
@@ -196,7 +192,11 @@ def fetch_and_store_emails(hr_user: HRUser, db: Session):
         for email_data in emails:
             msg_id = email_data.get("id", "")
 
-            exists = db.query(Email).filter_by(email_id=msg_id).first()
+            exists = (
+                db.query(Email)
+                .filter_by(email_id=msg_id, hr_user_id=hr_user.id)
+                .first()
+            )
             if exists:
                 continue
 
@@ -223,6 +223,7 @@ def fetch_and_store_emails(hr_user: HRUser, db: Session):
             )
 
             email_record = Email(
+                hr_user_id      = hr_user.id,
                 email_id        = msg_id,
                 provider        = "outlook",
                 candidate_name  = candidate_name or extracted["candidate_name"],

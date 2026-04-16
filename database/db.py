@@ -29,6 +29,7 @@ def create_tables():
 
     Base.metadata.create_all(bind=engine)
     ensure_email_received_at_column()
+    ensure_email_owner_column()
 
 
 def ensure_email_received_at_column():
@@ -63,3 +64,50 @@ def ensure_email_received_at_column():
         db.commit()
     finally:
         db.close()
+
+
+def ensure_email_owner_column():
+    inspector = inspect(engine)
+    if "emails" not in inspector.get_table_names():
+        return
+
+    column_names = {column["name"] for column in inspector.get_columns("emails")}
+    with engine.begin() as connection:
+        if "hr_user_id" not in column_names:
+            connection.execute(
+                text("ALTER TABLE emails ADD COLUMN hr_user_id INTEGER")
+            )
+            connection.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_emails_hr_user_id ON emails (hr_user_id)")
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE emails "
+                    "ADD CONSTRAINT fk_emails_hr_user_id "
+                    "FOREIGN KEY (hr_user_id) REFERENCES hr_users(id)"
+                )
+            )
+
+        unique_constraints = inspector.get_unique_constraints("emails")
+        for constraint in unique_constraints:
+            if constraint.get("column_names") == ["email_id"]:
+                constraint_name = constraint.get("name")
+                if constraint_name:
+                    connection.execute(
+                        text(f'ALTER TABLE emails DROP CONSTRAINT IF EXISTS "{constraint_name}"')
+                    )
+
+    refreshed_inspector = inspect(engine)
+    has_composite_unique = any(
+        constraint.get("column_names") == ["hr_user_id", "email_id"]
+        for constraint in refreshed_inspector.get_unique_constraints("emails")
+    )
+
+    if not has_composite_unique:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    'ALTER TABLE emails ADD CONSTRAINT "uix_email_hr_user_email_id" '
+                    "UNIQUE (hr_user_id, email_id)"
+                )
+            )

@@ -31,7 +31,7 @@ GMAIL_SCOPES = [
 ]
 CREDENTIALS_FILE  = 'credentials.json'
 OUTLOOK_CLIENT_ID = os.getenv("OUTLOOK_CLIENT_ID")
-OUTLOOK_TENANT    = "consumers"
+OUTLOOK_TENANT    = "common"
 OUTLOOK_SCOPES = [
     "https://graph.microsoft.com/Mail.Read",
     "https://graph.microsoft.com/Mail.ReadBasic",
