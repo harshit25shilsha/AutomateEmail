@@ -91,6 +91,7 @@ def resolve_recipient_emails(
 ) -> list[str]:
     query = db.query(Email).filter(
         Email.provider == current_user.provider,
+        Email.hr_user_id == current_user.id,
         Email.candidate_email.isnot(None),
         Email.candidate_email != "",
     )
