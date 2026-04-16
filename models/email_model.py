@@ -1,12 +1,16 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.sql import func
 from database.db import Base
 
 class Email(Base):
     __tablename__ = "emails"
+    __table_args__ = (
+        UniqueConstraint("hr_user_id", "email_id", name="uix_email_hr_user_email_id"),
+    )
 
     id               = Column(Integer, primary_key=True, index=True)
-    email_id         = Column(String, unique=True, index=True)
+    hr_user_id       = Column(Integer, ForeignKey("hr_users.id"), nullable=True, index=True)
+    email_id         = Column(String, nullable=False, index=True)
     provider         = Column(String, nullable=False)
     candidate_name   = Column(String, nullable=True)
     candidate_email  = Column(String, nullable=True, index=True)
