@@ -39,24 +39,54 @@ DATE_PATTERNS     = [
 ]
 
 SKILLS = [
+    # --- LANGUAGES (Additions) ---
     "Python", "JavaScript", "TypeScript", "Java", "C", "C++", "C#", "Go", "Rust", "Ruby",
     "PHP", "Perl", "Swift", "Kotlin", "R", "Scala", "Objective-C", "MATLAB", "Shell Scripting",
+    "Dart", "Solidity", "GraphQL", "SQL", "NoSQL", "Bash",
+
+    # --- FRONTEND FRAMEWORKS & LIBS ---
     "HTML", "CSS", "SASS", "LESS", "Bootstrap", "Tailwind CSS", "React", "Angular", "Vue.js",
-    "Next.js", "Nuxt.js", "Node.js", "Express.js", "Svelte", "jQuery", "Django", "Flask",
-    "FastAPI", "Spring Boot", "ASP.NET", "Laravel", "Symfony", "CodeIgniter", "Struts", "Gatsby",
+    "Next.js", "Nuxt.js", "Svelte", "jQuery", "Gatsby", "GSAP", "Material UI", "ShadCN", 
+    "Chakra UI", "Ant Design", "Redux", "Zustand", "Recoil", "MobX", "Storybook", "Vite",
+
+    # --- BACKEND & FRAMEWORKS ---
+    "Node.js", "Express.js", "Django", "Flask", "FastAPI", "Spring Boot", "ASP.NET", 
+    "Laravel", "Symfony", "CodeIgniter", "NestJS", "Strapi", "Socket.io", "Hapi.js",
+
+    # --- DATABASES ---
     "PostgreSQL", "MySQL", "MariaDB", "SQLite", "MongoDB", "Cassandra", "Redis", "Elasticsearch",
     "Firebase", "DynamoDB", "CouchDB", "Neo4j", "Snowflake", "BigQuery", "Oracle Database",
-    "Microsoft SQL Server", "AWS", "Azure", "Google Cloud", "IBM Cloud", "Heroku", "DigitalOcean",
+    "Microsoft SQL Server", "Supabase", "Prisma", "Sequelize", "Mongoose",
+
+    # --- CLOUD & DEVOPS ---
+    "AWS", "Azure", "Google Cloud", "IBM Cloud", "Heroku", "DigitalOcean", "Vercel", "Netlify",
     "Docker", "Kubernetes", "Terraform", "Ansible", "Jenkins", "GitLab CI/CD", "GitHub Actions",
-    "Bash", "Linux Administration", "Machine Learning", "Deep Learning",
-    "Data Science", "Artificial Intelligence", "Natural Language Processing", "Computer Vision",
-    "Data Analysis", "Data Visualization", "Pandas", "NumPy", "Matplotlib", "Seaborn",
-    "TensorFlow", "Keras", "PyTorch", "Scikit-learn", "React Native", "Flutter",
-    "Android Development", "iOS Development", "Ethical Hacking", "Penetration Testing",
-    "Cybersecurity", "Agile", "Scrum", "Kanban", "Waterfall", "JIRA", "Confluence",
-    "UI/UX Design", "Figma", "Adobe XD", "Sketch", "SEO", "SEM", "Google Analytics",
-    "Accounting", "Financial Analysis", "Technical Writing", "Research",
-    "Customer Service", "Sales", "Negotiation", "Public Speaking",
+    "CircleCI", "Nginx", "Apache", "Prometheus", "Grafana", "Linux Administration",
+
+    # --- TESTING ---
+    "Jest", "Cypress", "Selenium", "Mocha", "Chai", "Puppeteer", "Playwright", "React Testing Library",
+    "JUnit", "Pytest", "Postman",
+
+    # --- MOBILE & WEB3 ---
+    "React Native", "Flutter", "Android Development", "iOS Development", "Web3.js", "Ethers.js",
+
+    # --- DATA SCIENCE & AI ---
+    "Machine Learning", "Deep Learning", "Data Science", "Artificial Intelligence", 
+    "Natural Language Processing", "Computer Vision", "Data Analysis", "Data Visualization", 
+    "Pandas", "NumPy", "Matplotlib", "Seaborn", "TensorFlow", "Keras", "PyTorch", "Scikit-learn",
+    "LangChain", "OpenAI API", "HuggingFace", "Spark", "Hadoop",
+
+    # --- ARCHITECTURE & CONCEPTS ---
+    "DSA", "OOP", "REST APIs", "SDLC", "Microservices", "Serverless", "JWT", "OAuth",
+    "Agile", "Scrum", "Kanban", "Waterfall", "JIRA", "Confluence", "Git", "GitHub", "GitLab",
+
+    # --- DESIGN & TOOLS ---
+    "UI/UX Design", "Figma", "Adobe XD", "Sketch", "Canva", "Photoshop",
+
+    # --- SOFT SKILLS & BUSINESS ---
+    "SEO", "SEM", "Google Analytics", "Accounting", "Financial Analysis", "Technical Writing", 
+    "Research", "Customer Service", "Sales", "Negotiation", "Public Speaking", "Problem Solving","MS Excel", 
+    "MS-PowerPoint", "Team Leadership", "Communication Skills",
 ]
 
 SECTION_HEADERS = {
@@ -315,6 +345,8 @@ def parse_resume_text(text: str):
     phone = phones[0] if phones else None
     skills = extract_skills(text)
     experience = extract_section(text, SECTION_HEADERS["experience"])
+    all_lines = [l.strip() for l in text.splitlines() if l.strip()]
+    work_experiences = parse_work_experiences(all_lines)
     education = extract_education_section(text)
     projects = extract_section(text, SECTION_HEADERS["projects"])
     certifications = extract_section(text, SECTION_HEADERS["certifications"])
@@ -330,6 +362,7 @@ def parse_resume_text(text: str):
         "phone": phone,
         "skills": skills,
         "experience": experience,
+        "work_experiences": work_experiences,
         "education": education,
         "projects": projects,
         "certifications": certifications,
@@ -350,279 +383,212 @@ def split_name(full_name: Optional[str]):
         return parts[0], ""
     return parts[0], " ".join(parts[1:])
 
+
+
 def parse_education_items(education_lines: List[str]):
     edu_list = []
-    buffer = []
-
-    skip_keywords = [
-        "internship", "declaration", "achievements", "personal details",
-        "i hereby", "experience", "---"
-    ]
-
+    i = 0
+    
     degree_map = {
-        r"B\.?TECH":        "Bachelor of Technology",
-        r"B\.?E\.?":        "Bachelor of Engineering",
-        r"M\.?TECH":        "Master of Technology",
-        r"M\.?E\.?":        "Master of Engineering",
-        r"B\.?SC":          "Bachelor of Science",
-        r"M\.?SC":          "Master of Science",
-        r"MCA":             "Master of Computer Applications",
-        r"MBA":             "Master of Business Administration",
-        r"BCA":             "Bachelor of Computer Applications",
-        r"B\.?COM":         "Bachelor of Commerce",
-        r"M\.?COM":         "Master of Commerce",
-        r"INTERMEDIATE":    "Intermediate (12th)",
-        r"12TH":            "Intermediate (12th)",
-        r"10TH":            "High School (10th)",
-        r"HIGHSCHOOL":      "High School (10th)",
-        r"HIGH\s+SCHOOL":   "High School (10th)",
-        r"MATRICULATION":   "High School (10th)",
-        r"PHD|PH\.D":       "Doctor of Philosophy",
+        r"\bB\.?TECH\b": "Bachelor of Technology",
+        r"\bB\.?E\.?\b": "Bachelor of Engineering",
+        r"\bM\.?TECH\b": "Master of Technology",
+        r"\bM\.?E\.?\b": "Master of Engineering",
+        r"\bMCA\b": "Master of Computer Applications",
+        r"\bBCA\b": "Bachelor of Computer Applications",
+        r"\bB\.?SC\s+I\.?T\b": "B.Sc. in Information Technology",
+        r"\bM\.?SC\s+I\.?T\b": "M.Sc. in Information Technology",
+        r"\bMBA\b": "Master of Business Administration",
+        r"\bB\.?COM\b": "Bachelor of Commerce",
+        r"\bB\.?SC\b": "Bachelor of Science",
+        r"\bM\.?SC\b": "Master of Science",
+        r"\bC\.?A\.?\b": "Chartered Accountant", 
+        r"\bPH\.?D\b": "Doctor of Philosophy",
+        r"\bB\.?A\.?\b": "Bachelor of Arts",
+        r"\bM\.?A\.?\b": "Master of Arts",
+        r"\bINTERMEDIATE\b|\b12TH\b|\bHSC\b": "Intermediate (12th)",
+        r"\b10TH\b|\bHIGHSCHOOL\b|\bSSC\b": "High School (10th)",
     }
 
-    def detect_degree(line):
-        for pattern, full_name in degree_map.items():
-            if re.search(pattern, line, re.I):
-                return full_name
-        return None
-
-    def extract_university(line):
-        uni_match = re.search(
-            r'([\w\s\.]+(?:University|Institute of Technology|Institute|College|Academy|School)[^,\n]*)',
-            line, re.I
-        )
-        if uni_match:
-            return uni_match.group(1).strip(" ,.-•–()")
-        return None
-
-    def clean_institution(line, university):
-        cleaned = re.sub(
-            r'\b(Bachelor\s+of\s+Technology|Bachelor\s+of\s+Engineering|Master\s+of\s+Technology|'
-            r'Master\s+of\s+Science|Bachelor\s+of\s+Science|Master\s+of\s+Computer\s+Applications|'
-            r'Master\s+of\s+Business\s+Administration|Bachelor\s+of\s+Computer\s+Applications|'
-            r'B\.?TECH|M\.?TECH|B\.?E\.?|M\.?E\.?|B\.?SC|M\.?SC|MCA|MBA|BCA|B\.?COM|M\.?COM|'
-            r'INTERMEDIATE|12TH|10TH|HIGHSCHOOL|HIGH\s+SCHOOL|MATRICULATION|PHD|PH\.D|'
-            r'SGPA|CGPA|PERCENTAGE|in\b)\b',
-            '', line, flags=re.I
-        )
-        cleaned = re.sub(r'\b(20\d{2}|19\d{2})\b', '', cleaned)
-        cleaned = re.sub(r'\d+(\.\d+)?\s*%', '', cleaned)
-        if university:
-            cleaned = cleaned.replace(university, '')
-        cleaned = re.sub(
-            r'\b(Computer\s+Science|Information\s+Technology|Electronics|Mechanical|Civil|'
-            r'Electrical|Chemical|Biotechnology|Mathematics|Physics|Commerce|Arts|Science)\b',
-            '', cleaned, flags=re.I
-        )
-        cleaned = re.sub(r'[()&]', '', cleaned)
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip(" ,.-•–/")
-        return cleaned if len(cleaned.strip()) >= 3 else None
-
-    def process_block(block, idx):
-        line = " ".join(block).strip()
-
-        if not line or len(line) < 5:
-            return None
-        if any(kw in line.lower() for kw in skip_keywords):
-            return None
-
-        year_matches = re.findall(r'(20\d{2}|19\d{2})', line)
-        year = year_matches[-1] if year_matches else None
-
-        degree = detect_degree(line)
-
-        perc_match = re.search(
-            r'(\d+(\.\d+)?)\s*%|\b(SGPA|CGPA)\s*[:\-]?\s*(\d+(\.\d+)?)', line, re.I
-        )
-        percentage = None
-        if perc_match:
-            percentage = perc_match.group(1) or perc_match.group(4)
-
-        university = extract_university(line)
-        institution = clean_institution(line, university)
-
-        if not institution or len(institution.strip()) < 3:
-            institution = university 
-
-        if not institution or len(institution.strip()) < 3:
-            return None
-
-        return {
-            "educationId":       None,
-            "type":              "",
-            "institutionName":   institution,
-            "passingYear":       year,
-            "degreeName":        degree or "",
-            "board":             "",
-            "percentage":        percentage or "",
-            "university":        university or "",
-            "createdAt":         datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S"),
-            "updatedAt":         datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S"),
-            "educationStatus":   "COMPLETED",
-        }
-
-    i = 0
     while i < len(education_lines):
         line = education_lines[i].strip()
-
-        if re.match(r'^[\d\s\-–]+$', line) and re.search(r'(20\d{2}|19\d{2})', line):
-            if edu_list:
-                year_matches = re.findall(r'(20\d{2}|19\d{2})', line)
-                edu_list[-1]["passingYear"] = year_matches[-1] if year_matches else None
+        
+        if not line or any(kw in line.lower() for kw in ["internship", "experience", "---"]):
             i += 1
             continue
 
-        buffer.append(line)
-        if len(buffer) == 2 or i == len(education_lines) - 1:
-            result = process_block(buffer, i)
-            if result:
-                edu_list.append(result)
-            buffer = []
-        i += 1
+        context_window = " ".join(education_lines[i:i+3]).replace('\n', ' ')
+        
+        degree = ""
+        for pattern, full_name in degree_map.items():
+            if re.search(pattern, context_window, re.I):
+                degree = full_name
+                break
+
+        uni_match = re.search(r'([^,0-9]+(?:University|Institute|College|Academy|School))', context_window, re.I)
+        uni_name = uni_match.group(1).strip() if uni_match else ""
+
+        if degree or uni_name:
+            edu_type = "GRADUATION"
+            degree_upper = degree.upper()
+            
+            if any(x in degree_upper for x in ["MASTER", "M.TECH", "MBA", "MCA", "M.SC", "M.A", "M.E"]):
+                edu_type = "POST_GRADUATION"
+            elif "PH.D" in degree_upper or "PHILOSOPHY" in degree_upper:
+                edu_type = "DOCTORATE"
+            elif any(x in degree_upper for x in ["10TH", "12TH", "SCHOOL", "INTERMEDIATE", "SSC", "HSC"]):
+                edu_type = "SCHOOLING"
+            elif not degree and "School" in uni_name:
+                edu_type = "SCHOOLING"
+
+            years = re.findall(r'\b(20\d{2}|19\d{2})\b', context_window)
+            year = max(years) if years else ""
+
+            edu_list.append({
+                "educationId": None,
+                "type": edu_type,
+                "institutionName": uni_name,
+                "passingYear": year,
+                "degreeName": degree,
+                "board": "",
+                "percentage": "",
+                "university": uni_name,
+                "createdAt": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S"),
+                "updatedAt": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S"),
+                "educationStatus": "COMPLETED",
+            })
+            i += 2 
+        else:
+            i += 1
 
     return edu_list
 
+
 def parse_work_experiences(lines, candidateId=None):
     work_experiences = []
-    exp_id = 1
-    current_exp = None
 
     date_range_pattern = re.compile(
-        r'(?P<start>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s?\d{4})\s*[-–to]+\s*'
-        r'(?P<end>Present|Current|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s?\d{4})',
+        r'(?P<start>(?:January|February|March|April|May|June|July|August|September|October|November|December|'
+        r'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s?\d{4})\s*[-–\u2014to/]+\s*'
+        r'(?P<end>Present|Current|'
+        r'(?:January|February|March|April|May|June|July|August|September|October|November|December|'
+        r'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s?\d{4})',
         re.I,
     )
+
+    action_verbs = [
+        "Managed", "Led", "Developed", "Prepared", "Assisted",
+        "Monitored", "Handled", "Maintained", "Conducted"
+    ]
+
+    experience_headers = [
+        "work experience", "professional experience", "employment history",
+        "career history", "work history", "experience",
+        "internship experience", "internship & experience",
+        "internship/experience", "internship / experience",
+        "internship",
+    ]
+
+    stop_headers = [
+        "skills", "education", "certifications", "projects",
+        "achievements", "personal details", "declaration",
+        "extra curricular", "volunteer", "hobbies", "references",
+        "technical skills", "professional summary", "summary",
+    ]
 
     def _normalize(d):
         if not d or str(d).lower() in ("present", "current"):
             return None
         try:
-            dt = parser.parse(d)
+            dt = date_parser.parse(d)
             return f"{dt.year}-{dt.month:02d}"
-        except Exception:
+        except:
             return None
 
-    def clean_role_and_company(text):
-        role = text
-        company = None
-        if " at " in text:
-            role, company = text.split(" at ", 1)
-        else:
-            tokens = text.split()
-            if len(tokens) > 2 and tokens[-1][0].isupper():
-                company_tokens = []
-                for t in reversed(tokens):
-                    if t[0].isupper():
-                        company_tokens.insert(0, t)
-                    else:
-                        break
-                company = " ".join(company_tokens)
-                role = text.replace(company, "").strip()
-        return role.strip() or None, company.strip() if company else None
+    def _is_bullet_or_description(line):
+        return (
+            line.startswith(("•", "-", "*", "·")) or
+            any(line.lower().startswith(v.lower()) for v in action_verbs)
+        )
 
-    def save_current():
-        nonlocal current_exp, exp_id
-        if current_exp and (current_exp.get("role") or current_exp.get("companyName") or current_exp.get("description")):
-            if isinstance(current_exp.get("description"), list):
-                desc = " ".join(current_exp["description"]).strip()
-                current_exp["description"] = desc if desc else None
-            if current_exp.get("role"):
-                r, c = clean_role_and_company(current_exp["role"])
-                if r:
-                    current_exp["role"] = r
-                if c and not current_exp.get("companyName"):
-                    current_exp["companyName"] = c
-            desc = current_exp.get("description") or ""
-            current_exp["isRemote"] = "virtual" in desc.lower()
-            if current_exp["isRemote"]:
-                current_exp["description"] = desc.replace("Virtual", "").strip() or None
-            if current_exp["role"] and current_exp["role"].startswith("/"):
-                current_exp = None
-                return
-            current_exp.pop("description", None)
-            current_exp.pop("isRemote", None)
-            work_experiences.append(current_exp)
-            exp_id += 1
-        current_exp = None
+    def _is_experience_header(line):
+        return any(line.lower().strip() == h for h in experience_headers)
 
-    def is_header_line(line):
-        common_verbs = ("built", "developed", "integrated", "improved", "contributed", "worked", "used", "created", "cleaned")
-        words = line.lower().split()
-        if not words:         
-            return False
-        if len(words) > 10:
-            return False
-        if any(words[0].startswith(v) for v in common_verbs):
-            return False
-        if line.startswith("•") or line.startswith("-"):
-            return False
-        return True
+    def _is_stop_header(line):
+        return any(line.lower().strip() == h for h in stop_headers)
 
+    in_experience = False
     i = 0
     while i < len(lines):
-        raw_line = lines[i]
-        line = raw_line.strip("•- \t").strip()
-        if not line:
+        line = lines[i].strip()
+
+        if _is_experience_header(line):
+            in_experience = True
+            i += 1
+            continue
+
+        if in_experience and _is_stop_header(line):
+            in_experience = False
+            i += 1
+            continue
+
+        if not in_experience:
             i += 1
             continue
 
         dr = date_range_pattern.search(line)
-        start = end = None
         if dr:
             start, end = dr.group("start"), dr.group("end")
-            line = date_range_pattern.sub("", line).strip()
+            remaining_text = date_range_pattern.sub("", line).strip(", |–-\u2014").strip()
 
-        if is_header_line(line) and ("," in line or dr or not current_exp):
-            save_current()
-            parts = [p.strip() for p in line.split(",")]
-            role = parts[0] if parts else None
-            company = ", ".join(parts[1:]) if len(parts) > 1 else None
-            current_exp = {
+            context = []
+            back_idx = i - 1
+            while back_idx >= 0 and len(context) < 3:
+                prev_line = lines[back_idx].strip()
+
+                if not prev_line:
+                    back_idx -= 1
+                    continue
+
+                if _is_experience_header(prev_line) or _is_stop_header(prev_line):
+                    break
+
+                if _is_bullet_or_description(prev_line):
+                    break
+
+                context.append(prev_line)
+                back_idx -= 1
+
+            role = ""
+            company = ""
+
+            if len(context) >= 2:
+                company = context[0]
+                role = context[1]
+            elif len(context) == 1:
+                company = context[0]
+
+            if remaining_text:
+                if not company:
+                    company = remaining_text
+                elif remaining_text.lower() not in company.lower():
+                    company = f"{company}, {remaining_text}"
+
+            work_experiences.append({
                 "candidateId": candidateId,
                 "workExperienceId": None,
                 "role": role,
                 "companyName": company,
                 "startDate": _normalize(start),
-                "endDate": None if (end and end.lower() in ("present", "current")) else _normalize(end),
+                "endDate": _normalize(end),
                 "isCurrentlyWorking": bool(end and end.lower() in ("present", "current")),
-            }
-            if not company and i + 1 < len(lines):
-                next_line = lines[i + 1].strip("•- \t").strip()
-                next_dr = date_range_pattern.search(next_line)
-                if (next_line and not next_dr and is_header_line(next_line)
-                        and not next_line.lower().startswith(("built","developed","worked","implemented"))
-                        and len(next_line.split()) <= 8):
-                    current_exp["companyName"] = next_line
-                    i += 2  
-                    continue
-            i += 1
-            continue
+            })
 
-        if dr:
-            if not current_exp:
-                current_exp = {
-                    "candidateId": candidateId,
-                    "workExperienceId": None,
-                    "role": None,
-                    "companyName": None,
-                    "startDate": None,
-                    "endDate": None,
-                    "isCurrentlyWorking": False,
-                }
-            current_exp["startDate"] = _normalize(start)
-            current_exp["endDate"] = None if (end and end.lower() in ("present", "current")) else _normalize(end)
-            current_exp["isCurrentlyWorking"] = bool(end and end.lower() in ("present", "current"))
-            i += 1
-            continue
-
-        if current_exp:
-            current_exp.setdefault("description", []).append(line)
         i += 1
 
-    save_current()
     return work_experiences
 
-
+    
 def parse_projects(lines, candidateId=None):
     projects = []
     proj_id = 1
@@ -635,7 +601,8 @@ def parse_projects(lines, candidateId=None):
         "technical skills", "extra curricular", "strength and weakness",
         "technology stacks", "last updated", "page", "programming languages",
         "design and development tools", "web technologies", "databases",
-        "cloud platforms", "volunteer work", "reading books",
+        "cloud platforms", "volunteer work", "reading books", "education",
+        "certifications", "interests", "hobbies"
     }
 
     def _normalize(d):
@@ -654,27 +621,28 @@ def parse_projects(lines, candidateId=None):
         nonlocal current_proj, proj_id
         if not current_proj:
             return
-        if not current_proj.get("projectName") and not current_proj.get("description"):
+        
+        name = current_proj.get("projectName")
+        desc_list = current_proj.get("description", [])
+        
+        if not name or (not desc_list and not current_proj.get("technologies")):
             current_proj = None
             return
-        if current_proj.get("projectName") and len(current_proj["projectName"].split()) <= 1:
-            current_proj = None
-            return
-        if isinstance(current_proj.get("description"), list):
-            desc = " ".join(current_proj["description"]).strip()
-            current_proj["description"] = desc if desc else None
+
+        description = " ".join(desc_list).strip()
+        
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         projects.append({
             "candidateId": candidateId,
             "projectId": None,
-            "projectName": current_proj.get("projectName"),
+            "projectName": name,
             "client": None,
             "clientLocation": None,
             "startDate": _normalize(current_proj.get("startDate")),
             "endDate": _normalize(current_proj.get("endDate")),
             "role": None,
             "technologies": current_proj.get("technologies", []),
-            "description": current_proj.get("description"),
+            "description": description if description else None,
             "projectIndustry": None,
             "duration": None,
             "teamSize": None,
@@ -687,28 +655,34 @@ def parse_projects(lines, candidateId=None):
         proj_id += 1
         current_proj = None
 
-    def is_heading(line):
+    def is_heading(line, raw_line):
         l = line.lower()
         if any(bad in l for bad in bad_lines):
             return False
-        if l.startswith(("•", "-", "developed", "built", "created", "implemented",
-                         "used", "designed", "processed", "converted", "integrated",
-                         "extracted", "worked", "collaborated", "contributed")):
+        
+        if len(l.split()) > 12:
             return False
-        if line.strip().endswith("."):
+            
+        action_verbs = ("developed", "built", "created", "implemented", "used", "designed", "integrated")
+        if any(l.startswith(v) for v in action_verbs):
             return False
-        if len(l.split()) > 8:
+
+        if line.strip().endswith(".") and len(l.split()) > 4:
             return False
+
         return 1 < len(l.split())
 
     i = 0
     while i < len(lines):
-        line = clean_text(lines[i].strip("•- \t"))
+        raw_line = lines[i]
+        line = clean_text(raw_line.strip("•- \t"))
+        
         if not line:
             i += 1
             continue
 
         lower = line.lower()
+
         if any(bad in lower for bad in bad_lines):
             save_current()
             i += 1
@@ -731,9 +705,10 @@ def parse_projects(lines, candidateId=None):
             i += 1
             continue
 
-        if is_heading(line):
-            save_current()
+        if is_heading(line, raw_line):
+            save_current() 
             current_proj = {"projectName": line, "startDate": None, "endDate": None, "technologies": [], "description": []}
+            
             dm = date_pattern.search(line)
             if dm:
                 current_proj["startDate"] = dm.group()
@@ -741,11 +716,12 @@ def parse_projects(lines, candidateId=None):
             continue
 
         if current_proj:
-            text = "GitHub Link" if "github" in lower or "link" in lower else line
-            current_proj.setdefault("description", []).append(text)
+            text = "GitHub Link" if "github.com" in lower else line
+            current_proj["description"].append(text)
+        
         i += 1
 
-    save_current()
+    save_current() 
     return projects
 
 
