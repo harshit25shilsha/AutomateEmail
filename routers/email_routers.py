@@ -53,6 +53,13 @@ def get_provider_svc(provider: str):
     return svc
 
 
+def get_scoped_email_query(db: Session, current_user: HRUser, provider_value: str):
+    return db.query(Email).filter(
+        Email.provider == provider_value,
+        Email.hr_user_id == current_user.id,
+    )
+
+
 def get_email_ordering():
     return (
         Email.received_at.is_(None),
@@ -214,7 +221,7 @@ def get_emails(
             detail=f"{provider_value.capitalize()} not connected.",
         )
 
-    query = db.query(Email).filter(Email.provider == provider_value)
+    query = get_scoped_email_query(db, current_user, provider_value)
 
     if search:
         query = query.filter(
@@ -337,7 +344,7 @@ def get_all_emails_with_details(
             detail=f"{provider_value.capitalize()} not connected.",
         )
 
-    query = db.query(Email).filter(Email.provider == provider_value)
+    query = get_scoped_email_query(db, current_user, provider_value)
 
     if subject:
         query = query.filter(Email.subject.ilike(f"%{subject}%"))
@@ -362,6 +369,7 @@ def get_all_emails_with_details(
             db.query(Email.job_position)
             .filter(
                 Email.provider == provider_value,
+                Email.hr_user_id == current_user.id,
                 Email.job_position.isnot(None),
                 Email.job_position != ""
             )
@@ -508,6 +516,7 @@ def get_job_categories(
         db.query(Email.job_position)
         .filter(
             Email.provider == provider_value,
+            Email.hr_user_id == current_user.id,
             Email.is_job_application == True,
             Email.job_position.isnot(None),
             Email.job_position != ""
@@ -533,7 +542,8 @@ def get_job_categories(
         count = (
             db.query(func.count(Email.id))
             .filter(
-                Email.provider == provider,
+                Email.provider == provider_value,
+                Email.hr_user_id == current_user.id,
                 Email.is_job_application == True,
                 Email.job_position.in_(groups[key]["positions"])
             )
@@ -567,6 +577,7 @@ def get_job_positions(
         db.query(Email.job_position)
         .filter(
             Email.provider == provider_value,
+            Email.hr_user_id == current_user.id,
             Email.is_job_application == True,
             Email.job_position.isnot(None),
             Email.job_position != ""
@@ -599,7 +610,11 @@ def get_email(
             detail=f"{provider_value.capitalize()} not connected.",
         )
 
-    email = db.query(Email).filter_by(id=email_id, provider=provider_value).first()
+    email = (
+        db.query(Email)
+        .filter_by(id=email_id, provider=provider_value, hr_user_id=current_user.id)
+        .first()
+    )
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
 
@@ -658,6 +673,7 @@ def view_attachment(
         .filter(
             Attachment.id == att_id,
             Email.provider == provider_value,
+            Email.hr_user_id == current_user.id,
         )
         .first()
     )
@@ -702,6 +718,7 @@ def download_attachment(
         .filter(
             Attachment.id == att_id,
             Email.provider == provider_value,
+            Email.hr_user_id == current_user.id,
         )
         .first()
     )
@@ -754,6 +771,7 @@ def download_multiple(
                 .filter(
                     Attachment.id == att_id,
                     Email.provider == provider_value,
+                    Email.hr_user_id == current_user.id,
                 )
                 .first()
             )
@@ -799,7 +817,10 @@ def download_all(
     atts = (
         db.query(Attachment)
         .join(Email, Email.id == Attachment.email_id)
-        .filter(Email.provider == provider_value)
+        .filter(
+            Email.provider == provider_value,
+            Email.hr_user_id == current_user.id,
+        )
         .all()
     )
 
