@@ -115,7 +115,10 @@ def send_email(
 ):
     service = get_service(hr_user, db)
     msg = MIMEMultipart()
-    msg["to"] = to_email
+    if bcc_emails:
+        msg["to"] = "Undisclosed recipients:;"
+    else:
+        msg["to"] = to_email
     if bcc_emails:
         msg["bcc"] = ", ".join(sorted(set(bcc_emails)))
     msg["subject"] = subject
@@ -150,7 +153,11 @@ def fetch_and_store_emails(hr_user: HRUser, db: Session) -> int:
             break
 
         for msg_ref in messages:
-            exists = db.query(Email).filter_by(email_id=msg_ref['id']).first()
+            exists = (
+                db.query(Email)
+                .filter_by(email_id=msg_ref["id"], hr_user_id=hr_user.id)
+                .first()
+            )
             if exists:
                 continue
 
@@ -186,6 +193,7 @@ def fetch_and_store_emails(hr_user: HRUser, db: Session) -> int:
             final_name = candidate_name or extracted["candidate_name"]
 
             email_record = Email(
+                hr_user_id      = hr_user.id,
                 email_id        = msg['id'],
                 provider        = "gmail",
                 candidate_name  = final_name,
