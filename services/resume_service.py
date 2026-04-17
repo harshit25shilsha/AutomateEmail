@@ -286,7 +286,8 @@ def extract_section(text: str, section_names: List[str]) -> List[str]:
     if stop_match:
         content = content[:stop_match.start()]
 
-    return [l.strip() for l in content.strip().splitlines() if l.strip()]
+    return [l.strip()
+     for l in content.strip().splitlines() if l.strip()]
 
 
 def extract_skills(text: str) -> List[str]:
