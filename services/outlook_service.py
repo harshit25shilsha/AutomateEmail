@@ -2,6 +2,9 @@
 import os, json, requests, base64, re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+from pathlib import Path
 from msal import PublicClientApplication, SerializableTokenCache
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
@@ -110,6 +113,7 @@ def send_email(
     to_email: str,
     bcc_emails: list[str] | None = None,
     is_html: bool = False,
+    attachments: list[dict] | None = None,
 ):
     token = get_access_token(hr_user, db)
     headers = {
@@ -120,14 +124,15 @@ def send_email(
     msg = MIMEMultipart()
     if bcc_emails:
         msg["to"] = "Undisclosed recipients:;"
+        msg["bcc"] = ", ".join(sorted(set(bcc_emails)))
     else:
         msg["to"] = to_email
-    if bcc_emails:
-        msg["bcc"] = ", ".join(sorted(set(bcc_emails)))
+
     msg["subject"] = subject
 
     subtype = "html" if is_html else "plain"
     msg.attach(MIMEText(body, subtype, "utf-8"))
+    _add_attachments(msg, attachments)
 
     raw_message = base64.b64encode(msg.as_bytes()).decode("ascii")
 
@@ -163,6 +168,35 @@ def send_email(
         )
 
     return {"status": "sent"}
+
+
+def _add_attachments(msg, attachments: list[dict] | None = None):
+    if not attachments:
+        return
+
+    for item in attachments:
+        filename = item["filename"]
+        file_path = item.get("file_path")
+        file_bytes = item.get("file_bytes")
+        content_type = item.get("content_type", "application/octet-stream")
+
+        if file_bytes is None and file_path:
+            file_bytes = Path(file_path).read_bytes()
+
+        if file_bytes is None:
+            continue
+
+        maintype, subtype = (
+            content_type.split("/", 1)
+            if "/" in content_type
+            else ("application", "octet-stream")
+        )
+
+        part = MIMEBase(maintype, subtype)
+        part.set_payload(file_bytes)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+        msg.attach(part)
 
 
 # ── Fetch & Store Emails ──────────────────────────────────────
