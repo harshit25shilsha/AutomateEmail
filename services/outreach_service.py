@@ -136,6 +136,7 @@ def deliver_outreach_message(
     body: str,
     recipient_emails: list[str],
     is_html: bool = False,
+    attachments: list[dict] | None = None,
 ) -> dict:
     db = SessionLocal()
     try:
@@ -158,6 +159,7 @@ def deliver_outreach_message(
                 to_email=unique_recipients[0],
                 bcc_emails=None,
                 is_html=is_html,
+                attachments=attachments,
             )
         else:
             sender_fn(
@@ -168,6 +170,7 @@ def deliver_outreach_message(
                 to_email=hr_user.email,
                 bcc_emails=unique_recipients,
                 is_html=is_html,
+                attachments=attachments,
             )
 
         return {
