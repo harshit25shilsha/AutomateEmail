@@ -25,4 +25,8 @@ pdf2image
 Pillow 
 openpyxl 
 pandas 
-
+boto3==1.40.37
+botocore==1.40.37
+phonenumbers==9.0.12
+python_dateutil==2.9.0.post0
+spacy==3.8.7

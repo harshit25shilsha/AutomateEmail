@@ -35,7 +35,8 @@ def startup():
 app.include_router(auth.router)
 app.include_router(email_routers)
 app.include_router(employee_router)  
-app.include_router(resume_router)                    
+app.include_router(resume_router) 
+app.include_router(outreach_router)                   
 
 
 @app.get("/")
