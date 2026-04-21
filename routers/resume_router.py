@@ -17,9 +17,11 @@ from services.resume_service import (
     parse_education_items,
     parse_projects,
     parse_resume_text,
+    parse_with_llm,
     parse_work_experiences,
     sanitize_text,
     split_name,
+    normalize_date,
     BASIC_PHONE_REGEX,
     upload_file_to_s3,
 )
@@ -27,11 +29,84 @@ from dateutil import parser as date_parser
 
 router = APIRouter(prefix="/resume", tags=["Resume"])
 
+
+def _build_work_experiences_from_llm(llm_experiences, candidateId=None):
+    result = []
+    for exp in llm_experiences:
+        if not isinstance(exp, dict):
+            continue
+        end_date_raw = exp.get("endDate", "") or ""
+        is_current = end_date_raw.lower() in ("present", "current", "")
+        result.append({
+            "candidateId": candidateId,
+            "workExperienceId": None,
+            "role": exp.get("role", ""),
+            "companyName": exp.get("company", ""),
+            "startDate": normalize_date(exp.get("startDate", "")),
+            "endDate": None if is_current else normalize_date(end_date_raw),
+            "isCurrentlyWorking": is_current,
+        })
+    return result
+
+def _build_educations_from_llm(llm_educations):
+    edu_list = []
+    degree_type_map = {
+        "master": "POST_GRADUATION",
+        "mba": "POST_GRADUATION",
+        "mca": "POST_GRADUATION",
+        "m.tech": "POST_GRADUATION",
+        "m.sc": "POST_GRADUATION",
+        "ph.d": "DOCTORATE",
+        "doctorate": "DOCTORATE",
+        "10th": "SCHOOLING",
+        "12th": "SCHOOLING",
+        "intermediate": "SCHOOLING",
+        "senior secondary": "SCHOOLING",
+        "high school": "SCHOOLING",
+        "ssc": "SCHOOLING",
+        "hsc": "SCHOOLING",
+    }
+    
+    now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+    
+    for edu in llm_educations:
+        if not isinstance(edu, dict):
+            continue
+            
+        degree = edu.get("degree", "") or ""
+        institution = edu.get("institution", "") or ""
+        year = edu.get("year", "") or ""
+        board = edu.get("board", "") or "" 
+
+        edu_type = "GRADUATION"
+        lower_degree = degree.lower()
+        
+        for keyword, etype in degree_type_map.items():
+            if keyword in lower_degree:
+                edu_type = etype
+                break
+
+        edu_list.append({
+            "educationId": None,
+            "type": edu_type,
+            "institutionName": institution,
+            "passingYear": year,
+            "degreeName": degree,
+            "board": board, 
+            "percentage": edu.get("percentage", ""), 
+            "university": institution,
+            "createdAt": now_str,
+            "updatedAt": now_str,
+            "educationStatus": "COMPLETED",
+        })
+    return edu_list
+
+
 @router.post("/upload-single")
 async def upload_single_resume(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_employee: Employee = Depends(get_current_employee),  
+    current_employee: Employee = Depends(get_current_employee),
 ):
     try:
         text = extract_text(file)
@@ -68,12 +143,64 @@ async def upload_single_resume(
     parsed = parse_resume_text(text)
     parsed["raw_text"] = sanitize_text(parsed["raw_text"])
 
-    educations = parse_education_items(parsed.get("education") or [])
-    work_experiences = parsed.get("work_experiences") or []  
-    candidate_projects = parse_projects(
-        parsed.get("projects") or parsed["raw_text"].splitlines(),
-        candidateId=None,
-    )
+    llm_data = parse_with_llm(text)
+
+    def merge_field(primary, fallback):
+        return primary if primary else fallback
+
+    parsed["name"]  = merge_field(parsed.get("name"),  llm_data.get("name"))
+    parsed["email"] = merge_field(parsed.get("email"), llm_data.get("email"))
+    parsed["phone"] = merge_field(parsed.get("phone"), llm_data.get("phone"))
+
+    parsed["skills"] = list(set(
+        (parsed.get("skills") or []) + (llm_data.get("skills") or [])
+    ))
+
+    llm_experiences = llm_data.get("experience") or []
+    if llm_experiences and isinstance(llm_experiences[0], dict) and llm_experiences[0].get("role"):
+        work_experiences = _build_work_experiences_from_llm(llm_experiences)
+    else:
+        work_experiences = parsed.get("work_experiences") or parse_work_experiences(
+            parsed.get("experience") or []
+        )
+
+    llm_educations = llm_data.get("education") or []
+    if llm_educations and isinstance(llm_educations[0], dict) and llm_educations[0].get("institution"):
+        educations = _build_educations_from_llm(llm_educations)
+    else:
+        educations = parse_education_items(parsed.get("education") or [])
+
+    llm_projects = llm_data.get("projects") or []
+    if llm_projects and isinstance(llm_projects[0], dict) and llm_projects[0].get("name"):
+        now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+        candidate_projects = [
+            {
+                "candidateId": None,
+                "projectId": None,
+                "projectName": p.get("name", ""),
+                "client": None,
+                "clientLocation": None,
+                "startDate": None,
+                "endDate": None,
+                "role": None,
+                "technologies": p.get("technologies", []),
+                "description": p.get("description", ""),
+                "projectIndustry": None,
+                "duration": None,
+                "teamSize": None,
+                "locationMode": None,
+                "projectUrl": None,
+                "projectImages": [],
+                "createdAt": now_str,
+                "updatedAt": now_str,
+            }
+            for p in llm_projects if isinstance(p, dict)
+        ]
+    else:
+        candidate_projects = parse_projects(
+            parsed.get("projects") or parsed["raw_text"].splitlines(),
+            candidateId=None,
+        )
 
     resume_file_url = upload_file_to_s3(file)
     if not resume_file_url:
@@ -105,9 +232,14 @@ async def upload_single_resume(
         return JSONResponse({"error": "DB insert failed"}, status_code=500)
 
     candidateId = str(candidate.id)
+    for w in work_experiences:
+        w["candidateId"] = candidateId
+    for p in candidate_projects:
+        p["candidateId"] = candidateId
+
     firstName, lastName = split_name(parsed.get("name"))
     skill_list = parsed.get("skills") or []
-    
+
     raw_phone = parsed.get("phone")
     whatsapp = whatsapp_cc = country = countryCode = mobile_out = None
     if raw_phone:
