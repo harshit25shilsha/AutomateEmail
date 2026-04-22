@@ -94,6 +94,7 @@ class OutreachSendRequest(BaseModel):
     mode: OutreachMode
     subject: str = Field(min_length=1)
     body: str = Field(min_length=1)
+    # Selected Email.id values from the inbox table
     candidate_ids: List[int] = Field(default_factory=list)
     filters: Optional[OutreachFilters] = None
     is_html: bool = False
@@ -102,9 +103,20 @@ class OutreachRecipient(BaseModel):
     candidate_id: int
     email: EmailStr
 
+class OutreachSendResult(BaseModel):
+    email_id: int
+    recipient_email: EmailStr
+    candidate_name: str
+    job_role: str
+    status: str
+    error: Optional[str] = None
+
 class OutreachSendResponse(BaseModel):
     batch_id: str
     status: str
     provider: str
-    queued_count: int
+    total_selected: int
+    sent_count: int
+    failed_count: int
     message: str
+    results: List[OutreachSendResult] = Field(default_factory=list)

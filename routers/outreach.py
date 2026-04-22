@@ -7,7 +7,7 @@ from database.db import get_db
 from models.hr_user import HRUser
 from routers.auth import get_current_user
 from schemas.email_schema import OutreachFilters, OutreachMode, OutreachSendRequest, OutreachSendResponse
-from services.outreach_service import resolve_recipient_emails, deliver_outreach_message
+from services.outreach_service import resolve_recipient_targets, deliver_outreach_message
 import services.gmail_service as gmail_svc
 import services.outlook_service as outlook_svc
 
@@ -36,7 +36,7 @@ def _run_outreach_send(
         )
 
     try:
-        recipient_emails = resolve_recipient_emails(
+        recipient_targets = resolve_recipient_targets(
             db=db,
             current_user=current_user,
             mode=payload.mode.value,
@@ -49,25 +49,32 @@ def _run_outreach_send(
     batch_id = str(uuid.uuid4())
 
     try:
-        deliver_outreach_message(
-            hr_user_id=current_user.id,
+        delivery_summary = deliver_outreach_message(
+            db=db,
+            hr_user=current_user,
             delivery_mode=payload.mode.value,
             subject=payload.subject,
             body=payload.body,
-            recipient_emails=recipient_emails,
+            recipient_targets=recipient_targets,
             is_html=payload.is_html,
             attachments=attachments,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return {
-        "batch_id": batch_id,
-        "status": "sent",
-        "provider": current_user.provider,
-        "queued_count": len(recipient_emails),
-        "message": "Outreach email sent successfully",
-    }
+    delivery_summary.update(
+        {
+            "batch_id": batch_id,
+            "message": (
+                "Outreach email sent successfully"
+                if delivery_summary["failed_count"] == 0
+                else "Outreach email sent with some failures"
+                if delivery_summary["sent_count"] > 0
+                else "Outreach email delivery failed"
+            ),
+        }
+    )
+    return delivery_summary
 
 
 @router.post(
