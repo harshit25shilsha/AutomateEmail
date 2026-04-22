@@ -1,9 +1,5 @@
 # services/outlook_service.py
 import os, json, requests, base64, re
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 from pathlib import Path
 from msal import PublicClientApplication, SerializableTokenCache
 from bs4 import BeautifulSoup
@@ -118,29 +114,48 @@ def send_email(
     token = get_access_token(hr_user, db)
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "text/plain",
+        "Content-Type": "application/json",
     }
 
-    msg = MIMEMultipart()
+    message = {
+        "subject": subject,
+        "body": {
+            "contentType": "HTML" if is_html else "Text",
+            "content": body,
+        },
+        "toRecipients": [
+            {
+                "emailAddress": {
+                    "address": to_email,
+                    "name": to_email,
+                }
+            }
+        ],
+    }
+
     if bcc_emails:
-        msg["to"] = "Undisclosed recipients:;"
-        msg["bcc"] = ", ".join(sorted(set(bcc_emails)))
-    else:
-        msg["to"] = to_email
+        message["bccRecipients"] = [
+            {
+                "emailAddress": {
+                    "address": email,
+                    "name": email,
+                }
+            }
+            for email in sorted(set(bcc_emails))
+        ]
 
-    msg["subject"] = subject
-
-    subtype = "html" if is_html else "plain"
-    msg.attach(MIMEText(body, subtype, "utf-8"))
-    _add_attachments(msg, attachments)
-
-    raw_message = base64.b64encode(msg.as_bytes()).decode("ascii")
+    graph_attachments = _build_graph_attachments(attachments)
+    if graph_attachments:
+        message["attachments"] = graph_attachments
 
     try:
         resp = requests.post(
             "https://graph.microsoft.com/v1.0/me/sendMail",
             headers=headers,
-            data=raw_message,
+            json={
+                "message": message,
+                "saveToSentItems": True,
+            },
             timeout=30,
         )
     except requests.RequestException as exc:
@@ -168,12 +183,11 @@ def send_email(
         )
 
     return {"status": "sent"}
-
-
-def _add_attachments(msg, attachments: list[dict] | None = None):
+def _build_graph_attachments(attachments: list[dict] | None = None) -> list[dict]:
     if not attachments:
-        return
+        return []
 
+    graph_attachments = []
     for item in attachments:
         filename = item["filename"]
         file_path = item.get("file_path")
@@ -186,17 +200,16 @@ def _add_attachments(msg, attachments: list[dict] | None = None):
         if file_bytes is None:
             continue
 
-        maintype, subtype = (
-            content_type.split("/", 1)
-            if "/" in content_type
-            else ("application", "octet-stream")
+        graph_attachments.append(
+            {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": filename,
+                "contentType": content_type,
+                "contentBytes": base64.b64encode(file_bytes).decode("ascii"),
+            }
         )
 
-        part = MIMEBase(maintype, subtype)
-        part.set_payload(file_bytes)
-        encoders.encode_base64(part)
-        part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
-        msg.attach(part)
+    return graph_attachments
 
 
 # ── Fetch & Store Emails ──────────────────────────────────────
