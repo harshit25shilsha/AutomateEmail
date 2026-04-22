@@ -4,10 +4,10 @@ import re
 from datetime import datetime, timedelta
 from email.utils import parseaddr
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from database.db import SessionLocal
+from models.candidate import Candidate
 from models.email_model import Email
 from models.hr_user import HRUser
 import services.gmail_service as gmail_svc
@@ -21,6 +21,7 @@ PROVIDER_SENDERS = {
 OutlookSendError = getattr(outlook_svc, "OutlookSendError", Exception)
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PLACEHOLDER_RE = re.compile(r"{{\s*([a-zA-Z0-9_]+)\s*}}")
 
 
 def _get_sender_fn(hr_user: HRUser):
@@ -82,13 +83,79 @@ def _apply_filters(query, filters):
     return query
 
 
-def resolve_recipient_emails(
+def _order_email_rows(rows: list[Email], preserve_request_order: bool) -> list[Email]:
+    """
+    When preserve_request_order is True, the last occurrence for a recipient
+    wins because the request order is the source of truth.
+    When False, the rows should already be sorted from newest to oldest, so the
+    first occurrence for a recipient wins.
+    """
+    chosen: dict[str, tuple[int, Email]] = {}
+
+    for index, row in enumerate(rows):
+        email = _normalize_email(row.candidate_email)
+        if not _is_valid_email(email):
+            continue
+
+        if preserve_request_order:
+            chosen[email] = (index, row)
+        else:
+            chosen.setdefault(email, (index, row))
+
+    ordered = sorted(chosen.values(), key=lambda item: item[0])
+    return [row for _, row in ordered]
+
+
+def _load_candidate_for_email(db: Session, email_address: str) -> Candidate | None:
+    normalized = _normalize_email(email_address)
+    if not normalized:
+        return None
+
+    return (
+        db.query(Candidate)
+        .filter(func.lower(Candidate.email) == normalized)
+        .order_by(Candidate.id.desc())
+        .first()
+    )
+
+
+def _build_personalization_context(db: Session, email_row: Email) -> dict:
+    candidate = _load_candidate_for_email(db, email_row.candidate_email or "")
+
+    candidate_name = (
+        (candidate.name.strip() if candidate and candidate.name else "")
+        or (email_row.candidate_name or "").strip()
+        or "Candidate"
+    )
+    job_role = (email_row.job_position or "").strip() or "Applied Role"
+
+    return {
+        "email_id": email_row.id,
+        "recipient_email": _normalize_email(email_row.candidate_email),
+        "candidate_name": candidate_name,
+        "job_role": job_role,
+    }
+
+
+def _render_template(template: str, context: dict) -> str:
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1).strip().lower()
+        if key in {"name", "candidate_name"}:
+            return context["candidate_name"]
+        if key in {"job_role", "job_position", "role"}:
+            return context["job_role"]
+        return match.group(0)
+
+    return PLACEHOLDER_RE.sub(replace, template)
+
+
+def resolve_recipient_targets(
     db: Session,
     current_user: HRUser,
     mode: str,
     candidate_ids: list[int],
     filters=None,
-) -> list[str]:
+) -> list[dict]:
     query = db.query(Email).filter(
         Email.provider == current_user.provider,
         Email.hr_user_id == current_user.id,
@@ -100,83 +167,130 @@ def resolve_recipient_emails(
         if len(candidate_ids) != 1:
             raise ValueError("Single mode requires exactly one candidate_id.")
         query = query.filter(Email.id == candidate_ids[0])
+        rows = query.all()
+        rows = _order_email_rows(rows, preserve_request_order=True)
     elif mode == "multiple":
         if not candidate_ids:
             raise ValueError("Multiple mode requires at least one candidate_id.")
         query = query.filter(Email.id.in_(candidate_ids))
+        rows_by_id = {row.id: row for row in query.all()}
+        ordered_rows = [rows_by_id[candidate_id] for candidate_id in candidate_ids if candidate_id in rows_by_id]
+        rows = _order_email_rows(ordered_rows, preserve_request_order=True)
     elif mode == "all":
         query = _apply_filters(query, filters)
+        rows = query.order_by(
+            Email.received_at.is_(None),
+            Email.received_at.desc(),
+            Email.id.desc(),
+        ).all()
+        rows = _order_email_rows(rows, preserve_request_order=False)
     else:
         raise ValueError("Unsupported outreach mode.")
 
-    rows = query.all()
-    recipients: list[str] = []
-    seen: set[str] = set()
-
-    for row in rows:
-        email = _normalize_email(row.candidate_email)
-        if not _is_valid_email(email) or email in seen:
-            continue
-        seen.add(email)
-        recipients.append(email)
-
-    if not recipients:
+    if not rows:
         raise ValueError("No valid recipients found.")
 
-    if mode == "single" and len(recipients) != 1:
-        raise ValueError("Single mode must resolve to exactly one recipient.")
+    targets = []
+    for row in rows:
+        context = _build_personalization_context(db, row)
+        if not context["recipient_email"] or not _is_valid_email(context["recipient_email"]):
+            continue
+        targets.append(
+            {
+                **context,
+                "subject": row.subject or "",
+                "body": row.body or "",
+            }
+        )
 
-    return recipients
+    if not targets:
+        raise ValueError("No valid recipients found.")
+
+    return targets
+
+
+def resolve_recipient_emails(
+    db: Session,
+    current_user: HRUser,
+    mode: str,
+    candidate_ids: list[int],
+    filters=None,
+) -> list[str]:
+    targets = resolve_recipient_targets(
+        db=db,
+        current_user=current_user,
+        mode=mode,
+        candidate_ids=candidate_ids,
+        filters=filters,
+    )
+    return [target["recipient_email"] for target in targets]
 
 
 def deliver_outreach_message(
-    hr_user_id: int,
+    db: Session,
+    hr_user: HRUser,
     delivery_mode: str,
     subject: str,
     body: str,
-    recipient_emails: list[str],
+    recipient_targets: list[dict],
     is_html: bool = False,
     attachments: list[dict] | None = None,
 ) -> dict:
-    db = SessionLocal()
-    try:
-        hr_user = db.query(HRUser).filter(HRUser.id == hr_user_id).first()
-        if not hr_user:
-            raise ValueError("HR user not found.")
+    sender_fn = _get_sender_fn(hr_user)
 
-        sender_fn = _get_sender_fn(hr_user)
+    if not recipient_targets:
+        raise ValueError("No recipients provided.")
 
-        unique_recipients = list(dict.fromkeys(recipient_emails))
-        if not unique_recipients:
-            raise ValueError("No recipients provided.")
+    results = []
+    sent_count = 0
+    failed_count = 0
 
-        if delivery_mode == "single":
+    for target in recipient_targets:
+        rendered_subject = _render_template(subject, target)
+        rendered_body = _render_template(body, target)
+
+        try:
             sender_fn(
                 hr_user=hr_user,
                 db=db,
-                subject=subject,
-                body=body,
-                to_email=unique_recipients[0],
+                subject=rendered_subject,
+                body=rendered_body,
+                to_email=target["recipient_email"],
                 bcc_emails=None,
                 is_html=is_html,
                 attachments=attachments,
             )
-        else:
-            sender_fn(
-                hr_user=hr_user,
-                db=db,
-                subject=subject,
-                body=body,
-                to_email=hr_user.email,
-                bcc_emails=unique_recipients,
-                is_html=is_html,
-                attachments=attachments,
+            sent_count += 1
+            results.append(
+                {
+                    "email_id": target["email_id"],
+                    "recipient_email": target["recipient_email"],
+                    "candidate_name": target["candidate_name"],
+                    "job_role": target["job_role"],
+                    "status": "sent",
+                    "error": None,
+                }
+            )
+        except Exception as exc:
+            failed_count += 1
+            results.append(
+                {
+                    "email_id": target["email_id"],
+                    "recipient_email": target["recipient_email"],
+                    "candidate_name": target["candidate_name"],
+                    "job_role": target["job_role"],
+                    "status": "failed",
+                    "error": getattr(exc, "user_message", str(exc)),
+                }
             )
 
-        return {
-            "status": "sent",
-            "provider": hr_user.provider,
-            "queued_count": len(unique_recipients),
-        }
-    finally:
-        db.close()
+    overall_status = "sent" if failed_count == 0 else "partial_success" if sent_count > 0 else "failed"
+
+    return {
+        "status": overall_status,
+        "provider": hr_user.provider,
+        "total_selected": len(recipient_targets),
+        "sent_count": sent_count,
+        "failed_count": failed_count,
+        "results": results,
+    }
