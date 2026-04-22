@@ -82,6 +82,13 @@ def _get_body(payload):
             body_text = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
     return body_text.strip()
 
+def _normalize_plain_text_body(body: str) -> str:
+    """
+    Normalize line endings before building the MIME message so plain-text
+    emails keep their paragraph and line-break structure consistently.
+    """
+    return (body or "").replace("\r\n", "\n").replace("\r", "\n")
+
 def _save_attachment(service, msg_id, part):
     filename = _decode_str(part.get("filename", ""))
     if not filename:
@@ -129,7 +136,8 @@ def send_email(
     msg["subject"] = subject
 
     subtype = "html" if is_html else "plain"
-    msg.attach(MIMEText(body, subtype, "utf-8"))
+    normalized_body = body if is_html else _normalize_plain_text_body(body)
+    msg.attach(MIMEText(normalized_body, subtype, "utf-8"))
     _add_attachments(msg, attachments)
 
     raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
