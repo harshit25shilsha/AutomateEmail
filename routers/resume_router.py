@@ -179,7 +179,6 @@ async def upload_single_resume(
                 "projectId": None,
                 "projectName": p.get("name", ""),
                 "client": None,
-                "clientLocation": None,
                 "startDate": None,
                 "endDate": None,
                 "role": None,
@@ -187,12 +186,13 @@ async def upload_single_resume(
                 "description": p.get("description", ""),
                 "projectIndustry": None,
                 "duration": None,
-                "teamSize": None,
-                "locationMode": None,
                 "projectUrl": None,
                 "projectImages": [],
-                "createdAt": now_str,
-                "updatedAt": now_str,
+                # "createdAt": now_str,
+                # "updatedAt": now_str,
+                # "teamSize": None,
+                # "locationMode": None,
+                # "clientLocation": None,
             }
             for p in llm_projects if isinstance(p, dict)
         ]
@@ -212,10 +212,7 @@ async def upload_single_resume(
             email=parsed.get("email"),
             phone=parsed.get("phone"),
             linkedin=parsed.get("linkedin"),
-            skypeId=parsed.get("skypeId"),
             gender=parsed.get("gender"),
-            aadharCardNumber=parsed.get("aadharCardNumber"),
-            panCardNumber=parsed.get("panCardNumber"),
             skills=parsed.get("skills") or [],
             experience=work_experiences or [],
             education=educations or [],
@@ -223,6 +220,10 @@ async def upload_single_resume(
             certifications=parsed.get("certifications") or [],
             raw_text=parsed.get("raw_text"),
             resume_url=resume_file_url,
+            # github="",
+            # skypeId=parsed.get("skypeId"),
+            # aadharCardNumber=parsed.get("aadharCardNumber"),
+            # panCardNumber=parsed.get("panCardNumber"),
         )
         db.add(candidate)
         db.commit()
@@ -272,74 +273,83 @@ async def upload_single_resume(
     keyExperience = f"{years} Year"
     keyExperienceInMonth = f"{months} Month"
 
+    current_job = next(
+        (w for w in work_experiences if w.get("isCurrentlyWorking")),
+        None
+    )
+    current_designation = current_job.get("role") if current_job else None
+    current_company = current_job.get("companyName") if current_job else None
+
+
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     createdAt_ms = int(now.timestamp() * 1000)
     updatedAt_ms = createdAt_ms
     last_login_str = now.strftime("%d-%m-%Y %H:%M:%S IST")
 
     data = {
-        "candidateId": candidateId,
         "firstName": firstName or "",
         "lastName": lastName or "",
-        "keyExperience": keyExperience,
-        "keyExperienceInMonth": keyExperienceInMonth,
+        "Experience": keyExperience,
         "address": None,
-        "skypeId": parsed.get("skypeId"),
+        "github":"",
         "linkedIn": parsed.get("linkedin"),
-        "whatsapp": whatsapp,
-        "whatsappCountryCode": whatsapp_cc,
-        "country": country,
-        "state": None,
-        "district": None,
-        "city": None,
         "email": parsed.get("email"),
         "mobile": mobile_out,
         "countryCode": countryCode,
-        "availableForWork": True,
-        "profileImageUrl": None,
-        "pincode": None,
-        "activeStatus": True,
-        "currentDesignation": None,
-        "overview": "Reduce Time & Cost: Cut hiring time by up to 70% and avoid the costs of bad hires with data-backed decision-making.",
-        "currentlyWorkingCompanyName": None,
-        "userType": "CANDIDATE",
-        "createdAt": createdAt_ms,
-        "updatedAt": updatedAt_ms,
-        "reportingManager": None,
-        "vendorId": None,
+        "currentDesignation": current_designation,
+        "currentlyWorkingCompanyName": current_company,
         "workExperiences": work_experiences,
         "educations": educations,
         "skillList": skill_list,
-        "resumeFileName": file.filename,
         "resumeFileUrl": resume_file_url,
-        "aadharCardNumber": parsed.get("aadharCardNumber"),
-        "panCardNumber": parsed.get("panCardNumber"),
         "gender": parsed.get("gender"),
-        "department": None,
-        "candidatePrice": {
-            "id": None, "perMonth": None, "perDay": None,
-            "perWeek": None, "perHour": None, "currency": None,
-            "openForNegotiation": None,
-        },
-        "candidateAvailabilityStatus": "ACTIVE",
-        "customCandidateInfo": None,
-        "aadhaarCardUrl": None,
-        "panCardUrl": None,
         "candidateProjects": candidate_projects,
-        "videoUrl": None,
-        "candidateEmpId": None,
         "candidateCertificate": [],
         "candidateSkills": [
             {"candidateSkillsId": i + 1, "skills": s, "experience": None,
              "rating": None, "candidateId": candidateId}
             for i, s in enumerate(skill_list)
         ],
-        "lastLogin": last_login_str,
-        "profileCompleteness": "COMPLETE" if (parsed.get("skills") or parsed.get("experience")) else "INCOMPLETE",
-        "userSubscription": None,
-        "isRejected": None,
-        "rejectionReason": None,
-        "isBillable": None,
+        # "lastLogin": last_login_str,
+        # "profileCompleteness": "COMPLETE" if (parsed.get("skills") or parsed.get("experience")) else "INCOMPLETE",
+        # "userSubscription": None,
+        # "isRejected": None,
+        # "ExperienceInMonth": keyExperienceInMonth,
+        # "rejectionReason": None,
+        # "isBillable": None,
+        # "candidateId": candidateId,
+        # "videoUrl": None,
+        # "candidateEmpId": None,
+        # "skypeId": parsed.get("skypeId"),
+        # "department": None,
+        # "candidatePrice": {
+        #     "id": None, "perMonth": None, "perDay": None,
+        #     "perWeek": None, "perHour": None, "currency": None,
+        #     "openForNegotiation": None,
+        # },
+        # "candidateAvailabilityStatus": "ACTIVE",
+        # "customCandidateInfo": None,
+        # "aadhaarCardUrl": None,
+        # "panCardUrl": None,
+        # "aadharCardNumber": parsed.get("aadharCardNumber"),
+        # "panCardNumber": parsed.get("panCardNumber"),
+        # "resumeFileName": file.filename,
+        # "userType": "CANDIDATE",
+        # "createdAt": createdAt_ms,
+        # "updatedAt": updatedAt_ms,
+        # "reportingManager": None,
+        # "vendorId": None,
+        # "overview": "Reduce Time & Cost: Cut hiring time by up to 70% and avoid the costs of bad hires with data-backed decision-making.",
+         # "availableForWork": True,
+        # "profileImageUrl": None,
+        # "pincode": None,
+        # "activeStatus": True,
+        # "whatsapp": whatsapp,
+        # "whatsappCountryCode": whatsapp_cc,
+        # "country": country,
+        # "state": None,
+        # "district": None,
+        # "city": None,
     }
 
     return JSONResponse(content={

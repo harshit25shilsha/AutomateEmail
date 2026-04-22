@@ -337,7 +337,6 @@ def extract_date_range(text):
     return None, None
 
 
-
 def parse_with_llm(text: str) -> dict:
     prompt = f"""
 You are an advanced ATS resume parser.
@@ -401,8 +400,6 @@ Resume Text:
         print(f"[LLM ERROR]: {e}")
 
     return {}
-
-
 
 def parse_resume_text(text: str):
     name = extract_name(text)

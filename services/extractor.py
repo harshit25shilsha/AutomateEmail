@@ -161,6 +161,18 @@ def _subject_is_pure_job_title(subject: str) -> bool:
     return bool(_PURE_JOB_TITLE_PATTERN.match(subject.strip()))
 
 
+_BARE_TECH_SUBJECT_PATTERN = re.compile(
+    r'^(?:(?:senior|junior|lead|sr\.?|jr\.?|associate|principal|staff)\s+)?'
+    r'(python|java(?:script)?|react(?:\.?js)?|node(?:\.?js)?|angular|vue(?:\.?js)?|'
+    r'flutter|django|fastapi|spring|devops|machine\s+learning|data\s+science|'
+    r'data\s+engineer(?:ing)?|backend|front.?end|full.?stack|android|ios|mobile|'
+    r'php|golang|rust|c\+\+|c#|dotnet|\.net|aws|gcp|azure|cloud|kubernetes|docker|'
+    r'qa|ui.?ux|blockchain|solidity|web3|cybersecurity|embedded|firmware|sql|dba)'
+    r'\s*$',
+    re.IGNORECASE
+)
+
+
 _SUBJECT_PATTERNS = [
     r'(?:job\s+role\s+for|opening\s+for|vacancy\s+for|hiring\s+for|role\s+for)\s+'
     r'([A-Za-z0-9][A-Za-z0-9\s\+\#\.]+?)(?:[,\.\n(]|$)',
@@ -228,6 +240,10 @@ def _extract_from_subject(subject: str) -> str | None:
     if _subject_is_pure_job_title(stripped) and not _is_blacklisted(stripped):
         return stripped.title()
 
+    bare_match = _BARE_TECH_SUBJECT_PATTERN.match(stripped)
+    if bare_match and not _is_blacklisted(stripped):
+        return stripped.title()
+
     for pattern in _SUBJECT_PATTERNS:
         m = re.search(pattern, subject, re.IGNORECASE)
         if m:
@@ -291,7 +307,6 @@ _BODY_PATTERNS = [
 
 _MAX_ROLE_WORDS = 20
 
-
 def _extract_from_body(body: str) -> str | None:
     snippet = body[:1000]
     for pattern in _BODY_PATTERNS:
@@ -345,11 +360,16 @@ def _extract_via_keywords(subject: str, body: str) -> str | None:
 def extract_job_position(subject: str, body: str, sender_email: str = "") -> str | None:
     if _is_system_email(sender_email, subject):
         return None
-    return (
-        _extract_from_subject(subject)
-        or _extract_from_body(body)
-        or _extract_via_keywords(subject, body)
-    )
+
+    subject_result = _extract_from_subject(subject)
+    if subject_result:
+        return subject_result
+
+    body_result = _extract_from_body(body)
+    if body_result:
+        return body_result
+
+    return _extract_via_keywords(subject, body)
 
 
 def extract_attachment_info(attachment_names: list[str]) -> dict:
@@ -395,6 +415,15 @@ def is_job_application(subject: str, body: str, sender_email: str = "") -> bool:
 
     if _subject_is_pure_job_title(subject.strip()):
         return True
+
+    if _BARE_TECH_SUBJECT_PATTERN.match(subject.strip()):
+        body_has_signal = bool(re.search(
+            r'\b(resume|cv|application|applying|trainee|developer|engineer|'
+            r'position|role|job|hiring|fresher|cover\s+letter)\b',
+            body[:500], re.IGNORECASE
+        ))
+        if body_has_signal:
+            return True
     
     subject_has_role = bool(
         TECH_KEYWORDS_PATTERN.search(subject) or ROLE_SUFFIX_PATTERN.search(subject)
