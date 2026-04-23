@@ -212,106 +212,105 @@ def _build_graph_attachments(attachments: list[dict] | None = None) -> list[dict
     return graph_attachments
 
 
+
+def _fetch_folder_messages(token: str, folder_name: str, skip: int) -> list[dict]:
+    headers = {"Authorization": f"Bearer {token}"}
+    url = (
+        f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_name}/messages"
+        f"?$top=50"
+        f"&$skip={skip}"
+        f"&$orderby=receivedDateTime desc"
+        f"&$select=subject,from,receivedDateTime,body,hasAttachments,id"
+    )
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        raise Exception(f"Failed to fetch {folder_name}: {response.text}")
+    return response.json().get("value", [])
+
 # ── Fetch & Store Emails ──────────────────────────────────────
 def fetch_and_store_emails(hr_user: HRUser, db: Session):
-    token     = get_access_token(hr_user, db)
-    headers   = {"Authorization": f"Bearer {token}"}
-    skip      = 0
+    token = get_access_token(hr_user, db)
     new_count = 0
+    seen_message_ids: set[str] = set()
 
-    while True:
-        url = (
-            f"https://graph.microsoft.com/v1.0/me/messages"
-            f"?$top=50"
-            f"&$skip={skip}"
-            f"&$orderby=receivedDateTime desc"
-            f"&$select=subject,from,receivedDateTime,body,hasAttachments,id"
-        )
+    for folder_name in ("inbox", "junkemail"):
+        skip = 0
+        while True:
+            emails = _fetch_folder_messages(token, folder_name, skip)
+            if not emails:
+                break
 
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            raise Exception(f"Failed to fetch: {response.text}")
+            for email_data in emails:
+                msg_id = email_data.get("id", "")
+                if not msg_id or msg_id in seen_message_ids:
+                    continue
+                seen_message_ids.add(msg_id)
 
-        emails = response.json().get("value", [])
-        if not emails:
-            break
+                exists = (
+                    db.query(Email)
+                    .filter_by(email_id=msg_id, hr_user_id=hr_user.id)
+                    .first()
+                )
+                if exists:
+                    continue
 
-        for email_data in emails:
-            msg_id = email_data.get("id", "")
+                candidate_name, candidate_email = _extract_name_email(
+                    email_data.get("from", {})
+                )
+                subject = email_data.get("subject", "")
+                body = _get_body(email_data)
+                date = email_data.get("receivedDateTime", "")
 
-            exists = (
-                db.query(Email)
-                .filter_by(email_id=msg_id, hr_user_id=hr_user.id)
-                .first()
-            )
-            if exists:
-                continue
+                att_list = _save_attachment(token, msg_id)
+                att_names = [a["filename"] for a in att_list]
 
-            candidate_name, candidate_email = _extract_name_email(
-                email_data.get("from", {})
-            )
-            subject = email_data.get("subject", "")
-            body    = _get_body(email_data)
-            date    = email_data.get("receivedDateTime", "")
+                sender_str = f"{candidate_name} <{candidate_email}>"
+                extracted = extract_email_data(
+                    sender=sender_str,
+                    subject=subject,
+                    raw_body=body,
+                    date=date,
+                    attachment_names=att_names,
+                )
 
-            # ── Save attachments first to get filenames ───────
-            att_list  = _save_attachment(token, msg_id)
-            att_names = [a["filename"] for a in att_list]
+                email_record = Email(
+                    hr_user_id=hr_user.id,
+                    email_id=msg_id,
+                    provider="outlook",
+                    candidate_name=candidate_name or extracted["candidate_name"],
+                    candidate_email=candidate_email,
+                    subject=subject,
+                    body=body,
+                    date=date,
+                    received_at=parse_email_datetime(date),
+                    has_attachments=False,
+                    is_job_application=extracted["is_job_application"],
+                    job_position=extracted["job_position"],
+                )
+                db.add(email_record)
+                db.flush()
 
-            # ── Extract job position + is_job_application ─────
-            # Build sender string same format as Gmail "Name <email>"
-            sender_str = f"{candidate_name} <{candidate_email}>"
-            extracted  = extract_email_data(
-                sender           = sender_str,
-                subject          = subject,
-                raw_body         = body,
-                date             = date,
-                attachment_names = att_names
-            )
+                for att_data in att_list:
+                    att_info = process_attachment(att_data["file_path"])
+                    db.add(Attachment(
+                        email_id=email_record.id,
+                        filename=att_data["filename"],
+                        file_path=att_data["file_path"],
+                        file_size=att_data["file_size"],
+                        file_type=att_data["file_type"],
+                        phone=att_info.get("phone"),
+                        linkedin=att_info.get("linkedin"),
+                        github=att_info.get("github"),
+                        skills=json.dumps(att_info.get("skills", [])),
+                        experience=att_info.get("experience"),
+                    ))
+                    email_record.has_attachments = True
 
-            email_record = Email(
-                hr_user_id      = hr_user.id,
-                email_id        = msg_id,
-                provider        = "outlook",
-                candidate_name  = candidate_name or extracted["candidate_name"],
-                candidate_email = candidate_email,
-                subject         = subject,
-                body            = body,
-                date            = date,
-                received_at     = parse_email_datetime(date),
-                has_attachments = False,
-                # ── New fields from extractor ─────────────────
-                is_job_application = extracted["is_job_application"],
-                job_position       = extracted["job_position"],
-            )
-            db.add(email_record)
-            db.flush()
+                db.commit()
+                new_count += 1
 
-            # ── Save attachments + read content ───────────────
-            for att_data in att_list:
-                # Read resume/CV content for extra info
-                att_info = process_attachment(att_data["file_path"])
-
-                db.add(Attachment(
-                    email_id  = email_record.id,
-                    filename  = att_data["filename"],
-                    file_path = att_data["file_path"],
-                    file_size = att_data["file_size"],
-                    file_type = att_data["file_type"],
-                    # ── Extra info from resume ────────────────
-                    phone      = att_info.get("phone"),
-                    linkedin   = att_info.get("linkedin"),
-                    github     = att_info.get("github"),
-                    skills     = json.dumps(att_info.get("skills", [])),
-                    experience = att_info.get("experience"),
-                ))
-                email_record.has_attachments = True
-
-            db.commit()
-            new_count += 1
-
-        skip += 50
-        if len(emails) < 50:
-            break
+            skip += 50
+            if len(emails) < 50:
+                break
 
     return new_count
