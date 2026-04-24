@@ -31,4 +31,4 @@ phonenumbers==9.0.12
 python_dateutil==2.9.0.post0
 spacy==3.8.7
 groq
-
+PyMuPDF==1.24.9
