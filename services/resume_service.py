@@ -3,11 +3,17 @@ import tempfile
 import spacy
 import boto3
 import uuid
+import fitz 
+import time
 import mimetypes
 from groq import Groq
 from botocore.exceptions import NoCredentialsError
 from typing import List, Optional
 from PyPDF2 import PdfReader, PdfWriter
+import pdfminer.pdfparser as _pdfparser
+import pdfminer.pdfdocument as _pdfdoc
+from pdfminer.pdftypes import resolve1 as _resolve1
+from pdfminer.pdfpage import PDFPage as _PDFPage
 from fastapi import UploadFile
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -31,15 +37,110 @@ s3_client = boto3.client(
 
 EMAIL_REGEX       = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,10}\b'
 BASIC_PHONE_REGEX = r'(?:\+?\d{1,3}[\s\-]?)?(?:\(?\d{2,4}\)?[\s\-]?)?\d{3,5}[\s\-]?\d{3,5}'
-LINKEDIN_REGEX    = r'(https?:\/\/(?:www\.)?linkedin\.com\/[A-Za-z0-9\-\_\/]+)'
-SKYPE_REGEX       = r'(?i)(?:Skype\s*ID|Skype)\s*[:\-]?\s*([A-Za-z0-9\.\-_]+)'
-AADHAAR_REGEX     = r'\b\d{4}\s?\d{4}\s?\d{4}\b'
-PAN_REGEX         = r'\b[A-Z]{5}[0-9]{4}[A-Z]\b'
-GENDER_REGEX      = r'(?i)(?:gender|sex)\s*[:\-]?\s*(Male|Female|Other)\b'
 DATE_PATTERNS     = [
     r'(\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[\s\-]+\d{4})\s*(?:to|\-|\–)\s*(Present|\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[\s\-]+\d{4})',
     r'(\d{1,2}\/\d{4}|\d{4})\s*(?:to|\-|\–)\s*(Present|\d{1,2}\/\d{4}|\d{4})'
 ]
+_LINKEDIN_RAW = (
+    r'(?:linkedin\s*[:\-\|]?\s*)?'
+    r'(?:https?://)?(?:www\.)?'
+    r'linkedin\.com/(?:in|pub|company)/[A-Za-z0-9\-_%]+'
+)
+_GITHUB_RAW = (
+    r'(?:github\s*[:\-\|]?\s*)?'
+    r'(?:https?://)?(?:www\.)?'
+    r'github\.com/[A-Za-z0-9\-_]+'
+)
+_PORTFOLIO_RAW = (
+    r'(?:portfolio\s*[:\-\|]?\s*)'           # must have label to avoid noise
+    r'(?:https?://)?[A-Za-z0-9\-_.]+\.[A-Za-z]{2,}/[^\s]*'
+)
+
+LINKEDIN_REGEX  = re.compile(_LINKEDIN_RAW,  re.IGNORECASE)
+GITHUB_REGEX    = re.compile(_GITHUB_RAW,    re.IGNORECASE)
+PORTFOLIO_REGEX = re.compile(_PORTFOLIO_RAW, re.IGNORECASE)
+
+
+def _normalise_url(raw: str) -> str:
+    """Ensure the URL starts with https://"""
+    raw = raw.strip().rstrip('/')
+    if not raw.lower().startswith("http"):
+        raw = "https://" + raw
+    return raw
+
+
+def extract_hyperlinks_from_pdf(file_obj) -> dict:
+    links = {"linkedin": None, "github": None, "portfolio": None, "other": []}
+    try:
+        if isinstance(file_obj, str):
+            f = open(file_obj, "rb")
+            should_close = True
+        else:
+            file_obj.seek(0)
+            f = file_obj
+            should_close = False
+
+        parser = _pdfparser.PDFParser(f)
+        doc    = _pdfdoc.PDFDocument(parser)
+
+        for page in _PDFPage.create_pages(doc):
+            if "Annots" not in page.attrs:
+                continue
+            annots = _resolve1(page.attrs["Annots"])
+            if not annots:
+                continue
+            for annot in annots:
+                annot = _resolve1(annot)
+                subtype = annot.get("Subtype")
+                if not (subtype and getattr(subtype, "name", None) == "Link"):
+                    continue
+                action = annot.get("A")
+                if not action:
+                    continue
+                action = _resolve1(action)
+                uri = action.get("URI")
+                if not uri:
+                    continue
+                if isinstance(uri, bytes):
+                    uri = uri.decode("utf-8", errors="ignore")
+                uri = uri.strip()
+                if not uri or uri.startswith("mailto:") or uri.startswith("tel:"):
+                    continue
+                if "linkedin.com" in uri and not links["linkedin"]:
+                    links["linkedin"] = uri if uri.startswith("http") else "https://" + uri
+                elif "github.com" in uri and not links["github"]:
+                    links["github"] = uri if uri.startswith("http") else "https://" + uri
+                else:
+                    links["other"].append(uri)
+
+        if should_close:
+            f.close()
+    except Exception as e:
+        print(f"[WARN] PDF hyperlink extraction failed: {e}")
+    return links
+
+
+def extract_profile_urls(text: str) -> dict:
+
+    linkedin = github = portfolio = None
+
+    m = LINKEDIN_REGEX.search(text)
+    if m:
+        raw = re.sub(r'^(?:linkedin\s*[:\-\|]\s*)', '', m.group(0), flags=re.IGNORECASE).strip()
+        linkedin = _normalise_url(raw)
+
+    m = GITHUB_REGEX.search(text)
+    if m:
+        raw = re.sub(r'^(?:github\s*[:\-\|]\s*)', '', m.group(0), flags=re.IGNORECASE).strip()
+        github = _normalise_url(raw)
+
+    m = PORTFOLIO_REGEX.search(text)
+    if m:
+        raw = re.sub(r'^(?:portfolio\s*[:\-\|]\s*)', '', m.group(0), flags=re.IGNORECASE).strip()
+        portfolio = _normalise_url(raw)
+
+    return {"linkedin": linkedin, "github": github, "portfolio": portfolio}
+
 
 SKILLS = [
     # --- LANGUAGES ---
@@ -104,7 +205,8 @@ SECTION_HEADERS = {
         "educational background", "education and training",
     ],
     "projects":       ["projects", "project work", "key projects", "personal projects"],
-    "certifications": ["certifications", "certificates", "licenses"],
+    "certifications": ["certifications", "certificates", "licenses", "certifications & awards",
+                       "certifications and awards", "professional certifications"],
 }
 
 EXTRA_STOP_HEADERS = [
@@ -163,7 +265,6 @@ def upload_file_to_s3(file: UploadFile, folder="resumes") -> str:
         return None
 
 
-
 def extract_text(file: UploadFile) -> str:
     try:
         if file.filename.lower().endswith(".pdf"):
@@ -211,6 +312,17 @@ def extract_text(file: UploadFile) -> str:
         return ""
 
     return ""
+
+
+def extract_text_and_links(file: UploadFile) -> tuple[str, dict]:
+    
+    text = extract_text(file)
+
+    pdf_links = {"linkedin": None, "github": None, "portfolio": None, "other": []}
+    if file.filename.lower().endswith(".pdf"):
+        pdf_links = extract_hyperlinks_from_pdf(file.file)
+
+    return text, pdf_links
 
 
 def sanitize_text(text: str) -> str:
@@ -321,12 +433,20 @@ def normalize_date(date_str):
     date_str = date_str.strip().replace('.', '')
     if date_str.lower() in ("present", "current"):
         return None
+    # Expand 2-digit year → 4-digit (e.g. "April 24" → "April 2024", "Aug 22" → "Aug 2022")
+    date_str = re.sub(
+        r'(\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|'
+        r'Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+)(\d{2})\b',
+        lambda m: m.group(1) + ('20' if int(m.group(2)) <= 30 else '19') + m.group(2),
+        date_str,
+        flags=re.IGNORECASE
+    )
     try:
         dt = date_parser.parse(date_str)
         return f"{dt.year}-{dt.month:02d}"
     except Exception:
         return None
-
+    
 
 def extract_date_range(text):
     for pattern in DATE_PATTERNS:
@@ -341,15 +461,19 @@ def parse_with_llm(text: str) -> dict:
     prompt = f"""
 You are an advanced ATS resume parser.
 
-Extract structured data from the resume text.
+Extract structured data from the resume text below.
 
-Return ONLY valid JSON (no explanation).
+Return ONLY valid JSON (no explanation, no markdown, no backticks).
 
 Schema:
 {{
   "name": "",
   "email": "",
   "phone": "",
+  "gender": "",
+  "linkedin": "",
+  "github": "",
+  "portfolio": "",
   "skills": [],
   "experience": [
     {{
@@ -357,7 +481,14 @@ Schema:
       "company": "",
       "startDate": "",
       "endDate": "",
-      "description": ""
+      "description": "",
+      "projects": [
+        {{
+          "name": "",
+          "description": "",
+          "technologies": []
+        }}
+      ]
     }}
   ],
   "education": [
@@ -365,7 +496,7 @@ Schema:
       "degree": "",
       "institution": "",
       "year": "",
-      "board": "e.g. CBSE, ICSE, State Board, or university affiliation if applicable",
+      "board": "",
       "percentage": ""
     }}
   ],
@@ -375,36 +506,172 @@ Schema:
       "description": "",
       "technologies": []
     }}
+  ],
+  "certifications": [
+    {{
+      "name": "",
+      "issuer": "",
+      "year": "",
+      "url": ""
+    }}
   ]
 }}
+
+Rules:
+- For linkedin/github/portfolio: extract the URL even if it appears as plain text like "LinkedIn: linkedin.com/in/john" or "GitHub - github.com/john". Always return a full URL starting with https://.
+- For experience[].projects: if the candidate mentions working on specific named projects WITHIN a job entry, list them here. These will be merged into the global projects list.
+- For certifications: extract every certification, license, or course completion mentioned anywhere in the resume.
+- For gender: extract only if explicitly stated (Male/Female/Other). Return empty string if not found.
+- For dates: use format "Month YYYY" or "YYYY". Use "Present" for current roles.
+WORK EXPERIENCE RULES (strictly follow these):
+- If the company line contains "As:" or "As:-" followed by a title 
+  (e.g. "Millenium Intech Pvt Ltd As: - React Developer"), 
+  split it: everything before "As:" is the company, everything after is the role.
+- "role" must be the JOB TITLE only (e.g. "React Developer", "Senior Software Development Engineer", "SDE Intern"). Never put company name, dates, bullets, or technology lists in role.
+- "company" must be the EMPLOYER NAME only (e.g. "Millenium Intech Pvt Ltd", "TCS", "Bluestock Fintech"). Never put role, dates, or descriptions in company.
+- If a person worked at ONE company but on MULTIPLE projects with different date ranges, create ONE experience entry for that company — use the earliest startDate and the latest endDate (or "Present"). Do NOT create a separate experience entry per project.
+- "startDate" and "endDate" must be dates only (e.g. "January 2022", "Present"). Never leave them empty if dates are visible in the resume.
+- "description" should be a brief 1-2 sentence summary of responsibilities. Do not put bullet lists here.
+- "projects" inside an experience entry: only fill this if the resume explicitly names a project within that job. Leave as [] otherwise.
+- If the resume has no explicit 'Work Experience' section header but has a 'Professional Summary' 
+  paragraph describing a role, extract the role and company from that summary as a work experience entry.
+  Look for patterns like "X years of experience as [role] at [company]" or 
+  "developer with experience in [company-type] building [tech]".
+PROJECT RULES (strictly follow these):
+- Some resumes write projects like:
+    "Language: Java, Spring Boot, MySQL"  ← this is the tech stack, NOT the project name
+    "Description: ..."                    ← this has the real description
+    The project name in this case should be extracted from the Description text 
+    (e.g. "CABA" or "Swabi"), NOT from the Language line.
+- Never use a line starting with "Language:" as the project name.
+- Always extract technologies from the "Language:" line into the technologies array.
+- "name" must be the project title ONLY. If the resume writes "Formify – Full-Stack Form Builder Next.js, React, Prisma, Tailwind", the name is "Formify" or at most "Formify – Full-Stack Form Builder". Never include technology names in the project name.
+- "technologies" must be a list of tech strings extracted from the project line or its bullets (e.g. ["Next.js", "React", "Prisma", "Tailwind"]). Always populate this — never leave it as [].
+- "description" should be the project description text from the bullets below the project heading.
+- If the project heading line contains both a name and tech stack separated by "–", "-", "|", or just spaces after the title, split them: everything before the separator is the name, everything after goes into technologies.
+STRICT EXPERIENCE RULES:
+- "role" = job title ONLY. Never include tech, dates, or bullets.
+- "company" = employer name ONLY. Stop at the first comma if what follows looks like tech.
+- Technologies at the end of an experience entry (e.g. "Technologies Used: ...") 
+  belong to that entry — they are NOT a new experience entry.
+- Do NOT create a new experience entry just because you see a "Technologies Used:" line.
+- If multiple projects are listed under ONE employer, create ONE experience entry only.
 
 Resume Text:
 {text[:12000]}
 """
 
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            timeout=10
-        )
-        content = response.choices[0].message.content
+    max_retries = 3
+    retry_delays = [60, 120, 180]  # wait 1min, 2min, 3min between retries
+
+    for attempt in range(max_retries):
         try:
-            return json.loads(content)
-        except:
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                return json.loads(json_match.group(0))
-    except Exception as e:
-        print(f"[LLM ERROR]: {e}")
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                timeout=30
+            )
+            content = response.choices[0].message.content
+            try:
+                return json.loads(content)
+            except Exception:
+                json_match = re.search(r"\{.*\}", content, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group(0))
+            return {}
+
+        except Exception as e:
+            err = str(e)
+            if "429" in err and attempt < max_retries - 1:
+                wait = retry_delays[attempt]
+                print(f"[LLM RATE LIMIT] attempt {attempt+1}/{max_retries}, waiting {wait}s...")
+                time.sleep(wait)
+                continue
+            else:
+                print(f"[LLM ERROR]: {e}")
+                break
 
     return {}
 
+
+
+def extract_projects_from_experience(llm_experiences: list) -> list:
+    
+    extracted = []
+    for exp in llm_experiences:
+        if not isinstance(exp, dict):
+            continue
+        inner_projects = exp.get("projects") or []
+        company = exp.get("company", "")
+        role    = exp.get("role", "")
+        for proj in inner_projects:
+            if not isinstance(proj, dict) or not proj.get("name"):
+                continue
+            # Enrich description with context if description is empty
+            desc = proj.get("description", "")
+            if not desc and (company or role):
+                desc = f"Worked on this project at {company} as {role}.".strip(". ") + "."
+            extracted.append({
+                "name":        proj.get("name", ""),
+                "description": desc,
+                "technologies": proj.get("technologies") or [],
+            })
+    return extracted
+
+
+
+def build_certifications_from_llm(llm_certs: list) -> list:
+    result = []
+    now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+    for cert in llm_certs:
+        if not isinstance(cert, dict):
+            continue
+        name = cert.get("name", "").strip()
+        if not name:
+            continue
+        result.append({
+            "certificationId": None,
+            "name":   name,
+            "issuer": cert.get("issuer", "") or "",
+            "year":   cert.get("year", "")   or "",
+            "url":    cert.get("url", "")    or "",
+            "createdAt": now_str,
+            "updatedAt": now_str,
+        })
+    return result
+
+
+def parse_certifications_from_text(cert_lines: list) -> list:
+    """Fallback: convert raw certification lines into structured dicts."""
+    result = []
+    now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+    for line in cert_lines:
+        line = line.strip()
+        if not line:
+            continue
+        year_match = re.search(r'\b(20\d{2}|19\d{2})\b', line)
+        year = year_match.group(0) if year_match else ""
+        name = re.sub(r'\b(20\d{2}|19\d{2})\b', '', line).strip(" -|,")
+        if name:
+            result.append({
+                "certificationId": None,
+                "name":   name,
+                "issuer": "",
+                "year":   year,
+                "url":    "",
+                "createdAt": now_str,
+                "updatedAt": now_str,
+            })
+    return result
+
+
+
 def parse_resume_text(text: str):
-    name = extract_name(text)
+    name  = extract_name(text)
     emails = re.findall(EMAIL_REGEX, text)
-    email = emails[0] if emails else None
+    email  = emails[0] if emails else None
+
     phones = extract_phone_numbers(text)
     if not phones:
         fallback_phones = [
@@ -413,35 +680,31 @@ def parse_resume_text(text: str):
         ]
         phones = fallback_phones
     phone = phones[0] if phones else None
-    skills = extract_skills(text)
-    experience = extract_section(text, SECTION_HEADERS["experience"])
-    all_lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    skills        = extract_skills(text)
+    experience    = extract_section(text, SECTION_HEADERS["experience"])
+    all_lines     = [l.strip() for l in text.splitlines() if l.strip()]
     work_experiences = parse_work_experiences(all_lines)
-    education = extract_education_section(text)
-    projects = extract_section(text, SECTION_HEADERS["projects"])
+    education     = extract_education_section(text)
+    projects      = extract_section(text, SECTION_HEADERS["projects"])
     certifications = extract_section(text, SECTION_HEADERS["certifications"])
-    linkedin_match = re.search(LINKEDIN_REGEX, text)
-    skype_match = re.search(SKYPE_REGEX, text)
-    aadhaar_match = re.search(AADHAAR_REGEX, text)
-    pan_match = re.search(PAN_REGEX, text)
-    gender_match = re.search(GENDER_REGEX, text)
+
+    profile_urls  = extract_profile_urls(text)
 
     return {
-        "name": name,
-        "email": email,
-        "phone": phone,
-        "skills": skills,
-        "experience": experience,
+        "name":           name,
+        "email":          email,
+        "phone":          phone,
+        "skills":         skills,
+        "experience":     experience,
         "work_experiences": work_experiences,
-        "education": education,
-        "projects": projects,
+        "education":      education,
+        "projects":       projects,
         "certifications": certifications,
-        "linkedin": linkedin_match.group(0) if linkedin_match else None,
-        "skypeId": skype_match.group(1) if skype_match else None,
-        "aadharCardNumber": aadhaar_match.group(0) if aadhaar_match else None,
-        "panCardNumber": pan_match.group(0) if pan_match else None,
-        "gender": gender_match.group(1).capitalize() if gender_match else None,
-        "raw_text": sanitize_text(text),
+        "linkedin":       profile_urls["linkedin"],
+        "github":         profile_urls["github"],
+        "portfolio":      profile_urls["portfolio"],
+        "raw_text":       sanitize_text(text),
     }
 
 
@@ -538,10 +801,10 @@ def parse_work_experiences(lines, candidateId=None):
 
     date_range_pattern = re.compile(
         r'(?P<start>(?:January|February|March|April|May|June|July|August|September|October|November|December|'
-        r'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s?\d{4})\s*[-–\u2014to/]+\s*'
+        r'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{2,4})\s*[-–\u2014to/]+\s*'
         r'(?P<end>Present|Current|'
         r'(?:January|February|March|April|May|June|July|August|September|October|November|December|'
-        r'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s?\d{4})',
+        r'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{2,4})',
         re.I,
     )
 
@@ -571,20 +834,36 @@ def parse_work_experiences(lines, candidateId=None):
         try:
             dt = date_parser.parse(d)
             return f"{dt.year}-{dt.month:02d}"
-        except:
-            return None
+        except Exception:
+            return normalize_date(d)
 
     def _is_bullet_or_description(line):
         return (
-            line.startswith(("•", "-", "*", "·")) or
-            any(line.lower().startswith(v.lower()) for v in action_verbs)
+            line.startswith(("•", "-", "*", "·", "○")) or
+            any(line.lower().startswith(v.lower()) for v in action_verbs) or
+            # tech/tools lines
+            re.match(r'(?i)^(technologies used|tools used|tech stack|languages?)\s*:', line) is not None
         )
+
 
     def _is_experience_header(line):
         return any(line.lower().strip() == h for h in experience_headers)
 
     def _is_stop_header(line):
         return any(line.lower().strip() == h for h in stop_headers)
+
+    def _looks_like_company_or_role(line):
+        if not line:
+            return False
+        if _AS_ROLE_PATTERN.match(line.strip()):
+            return True
+        if _is_bullet_or_description(line):
+            return False
+        if _is_tech_string(line):
+            return False
+        if len(line.split()) > 10:
+            return False
+        return True
 
     in_experience = False
     i = 0
@@ -608,8 +887,8 @@ def parse_work_experiences(lines, candidateId=None):
         dr = date_range_pattern.search(line)
         if dr:
             start, end = dr.group("start"), dr.group("end")
-            remaining_text = date_range_pattern.sub("", line).strip(", |–-\u2014").strip()
 
+            # Walk back to find company/role — skip bullets and tech lines
             context = []
             back_idx = i - 1
             while back_idx >= 0 and len(context) < 3:
@@ -619,8 +898,9 @@ def parse_work_experiences(lines, candidateId=None):
                     continue
                 if _is_experience_header(prev_line) or _is_stop_header(prev_line):
                     break
-                if _is_bullet_or_description(prev_line):
-                    break
+                if not _looks_like_company_or_role(prev_line):
+                    back_idx -= 1
+                    continue
                 context.append(prev_line)
                 back_idx -= 1
 
@@ -633,26 +913,33 @@ def parse_work_experiences(lines, candidateId=None):
             elif len(context) == 1:
                 company = context[0]
 
-            if remaining_text:
+            # Also check if date line itself has company info after stripping the date
+            remaining_text = date_range_pattern.sub("", line).strip(", |–-\u2014").strip()
+            if remaining_text and _looks_like_company_or_role(remaining_text):
                 if not company:
                     company = remaining_text
                 elif remaining_text.lower() not in company.lower():
                     company = f"{company}, {remaining_text}"
 
-            work_experiences.append({
-                "candidateId": candidateId,
+            # Apply the same post-processing as LLM path
+            entry = {
+                "candidateId":      candidateId,
                 "workExperienceId": None,
-                "role": role,
-                "companyName": company,
-                "startDate": _normalize(start),
-                "endDate": _normalize(end),
+                "role":             role,
+                "companyName":      company,
+                "startDate":        _normalize(start),
+                "endDate":          _normalize(end),
                 "isCurrentlyWorking": bool(end and end.lower() in ("present", "current")),
-            })
+            }
+            entry = _split_role_company(entry)
+            entry = _clean_work_experience(entry)
+
+            if entry.get("companyName"):
+                work_experiences.append(entry)
 
         i += 1
 
     return work_experiences
-
 
 def parse_projects(lines, candidateId=None):
     projects = []
@@ -698,7 +985,6 @@ def parse_projects(lines, candidateId=None):
             "projectId": None,
             "projectName": name,
             "client": None,
-            "clientLocation": None,
             "startDate": _normalize(current_proj.get("startDate")),
             "endDate": _normalize(current_proj.get("endDate")),
             "role": None,
@@ -706,12 +992,8 @@ def parse_projects(lines, candidateId=None):
             "description": description if description else None,
             "projectIndustry": None,
             "duration": None,
-            "teamSize": None,
-            "locationMode": None,
             "projectUrl": None,
             "projectImages": [],
-            "createdAt": now,
-            "updatedAt": now,
         })
         proj_id += 1
         current_proj = None
@@ -773,10 +1055,27 @@ def parse_projects(lines, candidateId=None):
 
         if is_heading(line, raw_line):
             save_current()
+
+            proj_name = line
+            proj_techs = []
+
+            tech_split = re.split(r'\s{2,}|\s[\u2013\-\|]\s', line, maxsplit=1)
+            if len(tech_split) == 2:
+                candidate_name, candidate_techs = tech_split
+                tech_tokens = [t.strip() for t in re.split(r'[,/]', candidate_techs) if t.strip()]
+                if len(tech_tokens) >= 2 or any(
+                    kw.lower() in candidate_techs.lower()
+                    for kw in ("react", "node", "python", "java", "next", "vue", "django",
+                               "spring", "typescript", "javascript", "tailwind", "prisma",
+                               "mongodb", "firebase", "aws", "docker", "flask", "express")
+                ):
+                    proj_name  = candidate_name.strip()
+                    proj_techs = tech_tokens
+
             current_proj = {
-                "projectName": line,
+                "projectName": proj_name,
                 "startDate": None, "endDate": None,
-                "technologies": [], "description": []
+                "technologies": proj_techs, "description": []
             }
             dm = date_pattern.search(line)
             if dm:
@@ -794,16 +1093,17 @@ def parse_projects(lines, candidateId=None):
     return projects
 
 
+
 def calculate_parsability_score(text: str) -> dict:
     if not text.strip():
         return {"score": 0.0, "details": {}, "parsable": False}
 
     checks = {
-        "name": bool(extract_name(text)),
-        "email": bool(re.search(EMAIL_REGEX, text)),
-        "phone": bool(extract_phone_numbers(text)),
-        "skills": bool(extract_skills(text)),
-        "education": bool(extract_education_section(text)),
+        "name":       bool(extract_name(text)),
+        "email":      bool(re.search(EMAIL_REGEX, text)),
+        "phone":      bool(extract_phone_numbers(text)),
+        "skills":     bool(extract_skills(text)),
+        "education":  bool(extract_education_section(text)),
         "experience": bool(extract_section(text, SECTION_HEADERS["experience"])),
     }
 
@@ -811,7 +1111,164 @@ def calculate_parsability_score(text: str) -> dict:
     parsable = score >= 80
 
     return {
-        "score": round(score, 2),
+        "score":   round(score, 2),
         "details": checks,
         "parsable": parsable,
     }
+
+
+ 
+def extract_hyperlinks_from_pdf(file_obj) -> dict:
+    
+    links = {"linkedin": None, "github": None, "portfolio": None, "other": []}
+    try:
+ 
+        if isinstance(file_obj, str):
+            doc = fitz.open(file_obj)
+        elif hasattr(file_obj, '_path'):
+            doc = fitz.open(file_obj._path)
+        elif hasattr(file_obj, 'name') and isinstance(file_obj.name, str):
+            doc = fitz.open(file_obj.name)
+        else:
+            if hasattr(file_obj, 'seek'):
+                file_obj.seek(0)
+            data = file_obj.read()
+            doc = fitz.open(stream=data, filetype="pdf")
+ 
+        for page in doc:
+            for link in page.get_links():
+                uri = link.get("uri", "")
+                if not uri:
+                    continue
+                if isinstance(uri, bytes):
+                    uri = uri.decode("utf-8", errors="ignore")
+                uri = uri.strip()
+                if not uri or uri.startswith("mailto:") or uri.startswith("tel:"):
+                    continue
+                if not uri.startswith("http"):
+                    uri = "https://" + uri
+ 
+                if "linkedin.com" in uri and not links["linkedin"]:
+                    links["linkedin"] = uri
+                elif "github.com" in uri and not links["github"]:
+                    links["github"] = uri
+                elif not links["portfolio"] and any(
+                    kw in uri.lower()
+                    for kw in ("portfolio", "netlify", "vercel", "github.io")
+                ):
+                    links["portfolio"] = uri
+                else:
+                    links["other"].append(uri)
+ 
+        doc.close()
+ 
+    except Exception as e:
+        print(f"[WARN] PDF hyperlink extraction failed: {e}")
+ 
+    return links
+
+
+_TECH_KEYWORDS = {
+    "lambda", "api gateway", "sns", "sqs", "s3", "kafka", "terraform",
+    "docker", "kubernetes", "redis", "mongodb", "sql", "postgresql",
+    "mysql", "node", "nodejs", "react", "angular", "vue", "python",
+    "java", "spring", "aws", "azure", "gcp", "typescript", "javascript",
+    "graphql", "nestjs", "express", "django", "flask", "hibernate",
+    "firebase", "dynamodb", "elasticsearch", "rabbitmq", "nginx",
+    "jenkins", "webrtc", "sap hana",
+}
+
+
+def _is_tech_string(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    # If it starts with a tech keyword, it's definitely tech
+    for kw in _TECH_KEYWORDS:
+        if lower.startswith(kw):
+            return True
+    if text.count(",") >= 2:  # lowered from >2 to >=2
+        return True
+    tech_hits = sum(1 for kw in _TECH_KEYWORDS if kw in lower)
+    if tech_hits >= 1:  # lowered from 2 to 1
+        return True
+    return False
+
+_TITLE_KEYWORDS = [
+    "intern", "engineer", "developer", "manager", "analyst",
+    "architect", "designer", "lead", "consultant", "associate",
+    "sde", "swe", "devops", "qa", "tester", "director", "officer",
+    "specialist", "coordinator", "executive", "trainee",
+]
+
+_AS_ROLE_PATTERN = re.compile(r'^.+?\s+[Aa]s\s*:\s*-?\s*.+$')
+
+def _split_role_company(exp: dict) -> dict:
+    role    = exp.get("role", "") or ""
+    company = exp.get("companyName", "") or ""
+
+    # Strip leading bullet garbage
+    company = re.sub(r'^[^A-Z]*?,\s*', '', company).strip()
+
+    # ✅ NEW: Handle "Company Name  As: - Role" or "Company Name  As: Role"
+    as_match = re.search(r'^(.+?)\s+[Aa]s\s*[:\-]+\s*(.+)$', company)
+    if as_match:
+        candidate_company = as_match.group(1).strip()
+        candidate_role    = as_match.group(2).strip()
+        if candidate_company and candidate_role:
+            exp["companyName"] = candidate_company
+            exp["role"]        = candidate_role
+            return exp
+
+    # Split "SDE Intern – Bluestock Fintech (Remote)" into role + company
+    if not role and company:
+        for sep in [" – ", " — ", " - ", " | "]:
+            if sep in company:
+                left, right = company.split(sep, 1)
+                left  = left.strip()
+                right = re.sub(r'\s*\([^)]*\)\s*$', '', right.strip()).strip()
+                if any(kw in left.lower() for kw in _TITLE_KEYWORDS):
+                    exp["role"]        = left
+                    exp["companyName"] = right
+                    return exp
+
+    if role and _is_tech_string(role):
+        exp["role"] = ""
+
+    exp["companyName"] = company
+    return exp
+
+
+def _clean_work_experience(exp: dict) -> dict:
+    company = exp.get("companyName", "") or ""
+
+    # Strip leading bullet garbage
+    company = re.sub(r'^[^A-Z]*?,\s*', '', company).strip()
+
+    # Safety net split for "Role – Company" still in companyName
+    if not exp.get("role") and company:
+        for sep in [" – ", " — ", " - ", " | "]:
+            if sep in company:
+                left, right = company.split(sep, 1)
+                left  = left.strip()
+                right = re.sub(r'\s*\([^)]*\)\s*$', '', right.strip()).strip()
+                if any(kw in left.lower() for kw in _TITLE_KEYWORDS):
+                    exp["role"]        = left
+                    exp["companyName"] = right
+                    return exp
+
+    # "SQL, PostgresSQL., TCS" → "TCS"
+    if _is_tech_string(company):
+        parts    = [p.strip().rstrip(".") for p in company.split(",")]
+        non_tech = [p for p in parts if p and not _is_tech_string(p) and len(p) > 1]
+        company  = non_tech[-1] if non_tech else ""
+
+    exp["companyName"] = company
+    return exp
+
+
+
+
+
+
+

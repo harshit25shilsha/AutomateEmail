@@ -23,6 +23,7 @@ from schemas.email_schema import (
 )
 from services.extractor import extract_job_position
 from utils.date_utils import format_email_datetime
+from services.email_candidate_service import process_attachments_for_email
 
 router = APIRouter(prefix="/email", tags=["Email"])
 
@@ -857,5 +858,39 @@ def manual_sync(
         )
 
     count = svc.fetch_and_store_emails(current_user, db)
-    return {"message": f"Synced {count} new emails"}
 
+    candidates_saved = 0
+    try:
+        emails_with_attachments = (
+            db.query(Email)
+            .filter(
+                Email.provider        == provider_value,
+                Email.hr_user_id      == current_user.id,
+                Email.has_attachments == True,
+                #Email.is_job_application == True,
+            )
+            .all()
+        )
+
+        print(f"[SYNC] Found {len(emails_with_attachments)} emails with attachments")  # ADD
+
+        for email_record in emails_with_attachments:
+            attachments = (
+                db.query(Attachment)
+                .filter(Attachment.email_id == email_record.id)
+                .all()
+            )
+
+            print(f"[SYNC] Email '{email_record.subject}' has {len(attachments)} attachments: {[a.filename for a in attachments]}")  # ADD
+
+            candidates_saved += process_attachments_for_email(
+                email_record, attachments, provider_value, db
+            )
+
+    except Exception as e:
+        import traceback
+        print(f"[SYNC RESUME ERROR]: {e}")
+        traceback.print_exc()  
+    return {
+        "message": f"Synced {count} new emails, parsed {candidates_saved} resumes"
+    }
