@@ -5,6 +5,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database.db import get_db
+from models.employee import TokenBlacklist
 from models.hr_user import HRUser
 from models.employee import TokenBlacklist
 from schemas.email_schema import HRLoginResponse, MessageResponse
@@ -251,6 +252,7 @@ def get_profile(
 @router.post("/logout", response_model=MessageResponse)
 def logout(
     db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme),
     current_employee: dict = Depends(get_current_employee),
     provider: str | None = None,
     hr_user_id: int | None = None,
