@@ -123,6 +123,8 @@ def gmail_connect(
         db.refresh(hr_user)
 
         return {
+            "access_token": credentials.credentials,
+            "token_type":   "bearer",
             "hr_id":        hr_user.id,
             "employee_id":  employee_id,
             "name":         hr_user.name,
@@ -191,6 +193,8 @@ def outlook_connect(
         db.refresh(hr_user)
 
         return {
+            "access_token": credentials.credentials,
+            "token_type":   "bearer",
             "hr_id":        hr_user.id,
             "employee_id":  employee_id,
             "name":         hr_user.name,
