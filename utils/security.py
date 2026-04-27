@@ -61,9 +61,6 @@ def get_current_employee(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db)
 ):
-    print(f"DEBUG credentials: {credentials}")  
-    print(f"DEBUG token: {credentials.credentials[:30] if credentials else 'None'}") 
-
     from models.employee import TokenBlacklist
 
     token = credentials.credentials  
@@ -74,5 +71,7 @@ def get_current_employee(
     payload = decode_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if payload.get("role") is None:
+        raise HTTPException(status_code=401, detail="Employee login required")
 
     return payload
