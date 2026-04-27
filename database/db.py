@@ -32,6 +32,7 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
     ensure_email_received_at_column()
     ensure_email_owner_column()
+    ensure_hr_user_employee_column()
 
 
 def ensure_email_received_at_column():
@@ -113,3 +114,79 @@ def ensure_email_owner_column():
                     "UNIQUE (hr_user_id, email_id)"
                 )
             )
+
+
+def ensure_hr_user_employee_column():
+    inspector = inspect(engine)
+    if "hr_users" not in inspector.get_table_names():
+        return
+
+    column_names = {column["name"] for column in inspector.get_columns("hr_users")}
+    with engine.begin() as connection:
+        if "employee_id" not in column_names:
+            connection.execute(
+                text("ALTER TABLE hr_users ADD COLUMN employee_id INTEGER")
+            )
+            connection.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_hr_users_employee_id ON hr_users (employee_id)")
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE hr_users "
+                    "ADD CONSTRAINT fk_hr_users_employee_id "
+                    "FOREIGN KEY (employee_id) REFERENCES employees(id)"
+                )
+            )
+
+        unique_constraints = inspector.get_unique_constraints("hr_users")
+        for constraint in unique_constraints:
+            if constraint.get("column_names") == ["email"]:
+                constraint_name = constraint.get("name")
+                if constraint_name:
+                    connection.execute(
+                        text(f'ALTER TABLE hr_users DROP CONSTRAINT IF EXISTS "{constraint_name}"')
+                    )
+
+    refreshed_inspector = inspect(engine)
+    has_composite_unique = any(
+        constraint.get("column_names") == ["employee_id", "provider", "email"]
+        for constraint in refreshed_inspector.get_unique_constraints("hr_users")
+    )
+
+    if not has_composite_unique:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    'ALTER TABLE hr_users ADD CONSTRAINT "uix_hr_user_employee_provider_email" '
+                    "UNIQUE (employee_id, provider, email)"
+                )
+            )
+
+    # Best-effort backfill for rows that already match an employee email.
+    employee_rows = {}
+    db = SessionLocal()
+    try:
+        from models.employee import Employee
+        from models.hr_user import HRUser
+
+        employee_rows = {
+            employee.email.lower(): employee.id
+            for employee in db.query(Employee).all()
+            if employee.email
+        }
+
+        hr_users = (
+            db.query(HRUser)
+            .filter(HRUser.employee_id.is_(None))
+            .all()
+        )
+        updated = False
+        for hr_user in hr_users:
+            employee_id = employee_rows.get((hr_user.email or "").lower())
+            if employee_id:
+                hr_user.employee_id = employee_id
+                updated = True
+        if updated:
+            db.commit()
+    finally:
+        db.close()

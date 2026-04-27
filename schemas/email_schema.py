@@ -13,6 +13,7 @@ class HRLoginResponse(BaseModel):
     access_token: str
     token_type:   str = "bearer"
     hr_id:        int
+    employee_id:   int
     name:         str
     email:        str
     provider:     str
@@ -68,6 +69,9 @@ class MonitorStatus(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+    hr_user_id: Optional[int] = None
+    employee_id: Optional[int] = None
+    provider: Optional[str] = None
 
 
 class MultipleDownloadRequest(BaseModel):

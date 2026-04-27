@@ -5,11 +5,12 @@ from sqlalchemy.orm import Session
 
 from database.db import get_db
 from models.hr_user import HRUser
-from routers.auth import get_current_user
+from routers.auth import resolve_employee_hr_user
 from schemas.email_schema import OutreachFilters, OutreachMode, OutreachSendRequest, OutreachSendResponse
 from services.outreach_service import resolve_recipient_targets, deliver_outreach_message
 import services.gmail_service as gmail_svc
 import services.outlook_service as outlook_svc
+from utils.security import get_current_employee
 
 router = APIRouter(prefix="/outreach", tags=["Outreach"])
 
@@ -94,9 +95,10 @@ async def send_outreach(
     date_from: str | None = Form(default=None),
     date_to: str | None = Form(default=None),
     is_html: bool = Form(default=False),
+    hr_user_id: int | None = Form(default=None),
     attachments: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
-    current_user: HRUser = Depends(get_current_user),
+    current_employee: dict = Depends(get_current_employee),
 ):
     try:
         filters = None
@@ -134,5 +136,11 @@ async def send_outreach(
 
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    current_user = resolve_employee_hr_user(
+        db=db,
+        current_employee=current_employee,
+        hr_user_id=hr_user_id,
+    )
 
     return _run_outreach_send(payload, db, current_user, attachments=attachment_payloads)
