@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from enum import Enum
-from typing import Optional
+from datetime import datetime
+from typing import Optional, List
 
 class GenderEnum(str, Enum):
     male   = "male"
@@ -63,6 +64,57 @@ class EmployeeLoginResponse(BaseModel):
     email:        str
     name:         str
     user_type:    str
+
+
+class ConnectedEmailAccount(BaseModel):
+    id: int
+    name: str
+    email: str
+    provider: str
+    created_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
+
+
+class EmployeeConnectedAccountsResponse(BaseModel):
+    employee_id: int
+    employee_email: str
+    total_connected_accounts: int
+    gmail_count: int
+    outlook_count: int
+    gmail_accounts: List[ConnectedEmailAccount]
+    outlook_accounts: List[ConnectedEmailAccount]
+
+
+class EmployeeSummary(BaseModel):
+    id: int
+    name: str
+    email: str
+    mobile: str
+    gender: Optional[str] = None
+    user_type: str
+    is_active: bool
+
+
+class EmployeesListResponse(BaseModel):
+    total: int
+    employees: List[EmployeeSummary]
+
+
+class ConnectedMailAccountDetail(BaseModel):
+    hr_user_id: int
+    name: str
+    email: str
+    provider: str
+    is_active: bool
+    created_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
+
+
+class ConnectedMailAccountsResponse(BaseModel):
+    employee_id: int
+    employee_email: str
+    total_connected_accounts: int
+    accounts: List[ConnectedMailAccountDetail]
 
 
 class RegisterData(BaseModel):

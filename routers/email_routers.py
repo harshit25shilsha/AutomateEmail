@@ -15,7 +15,8 @@ from models.attachment_activity import AttachmentActivity
 from models.attachment_model import Attachment
 from models.email_model import Email
 from models.hr_user import HRUser
-from routers.auth import get_current_user
+from routers.auth import resolve_employee_hr_user
+from utils.security import get_current_employee
 from schemas.email_schema import (
     EmailListResponse,
     MessageResponse,
@@ -51,6 +52,20 @@ def get_provider_svc(provider: str):
             detail=f"Unsupported provider: '{provider}'. Use 'gmail' or 'outlook'.",
         )
     return svc
+
+
+def get_employee_mailbox(
+    provider: ProviderParam,
+    hr_user_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_employee: dict = Depends(get_current_employee),
+) -> HRUser:
+    return resolve_employee_hr_user(
+        db=db,
+        current_employee=current_employee,
+        provider=provider.value,
+        hr_user_id=hr_user_id,
+    )
 
 
 def get_scoped_email_query(db: Session, current_user: HRUser, provider_value: str):
@@ -195,7 +210,7 @@ def mark_attachments_downloaded(
 @router.get("/{provider}/status", response_model=MessageResponse)
 def status(
     provider: ProviderParam,
-    current_user: HRUser = Depends(get_current_user),
+    current_user: HRUser = Depends(get_employee_mailbox),
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -211,7 +226,7 @@ def get_emails(
     search: str = Query(default=None),
     get_all: bool = Query(default=False),
     db: Session = Depends(get_db),
-    current_user: HRUser = Depends(get_current_user),
+    current_user: HRUser = Depends(get_employee_mailbox),
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -334,7 +349,7 @@ def get_all_emails_with_details(
     ),  
     has_attachments:    Optional[bool]= Query(default=None),
     db:                 Session       = Depends(get_db),
-    current_user:       HRUser        = Depends(get_current_user)
+    current_user:       HRUser        = Depends(get_employee_mailbox)
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -502,7 +517,7 @@ def get_all_emails_with_details(
 def get_job_categories(
     provider:     ProviderParam,
     db:           Session = Depends(get_db),
-    current_user: HRUser  = Depends(get_current_user)
+    current_user: HRUser  = Depends(get_employee_mailbox)
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -563,7 +578,7 @@ def get_job_categories(
 def get_job_positions(
     provider:     ProviderParam,
     db:           Session = Depends(get_db),
-    current_user: HRUser  = Depends(get_current_user)
+    current_user: HRUser  = Depends(get_employee_mailbox)
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -600,7 +615,7 @@ def get_email(
     provider: ProviderParam,
     email_id: int,
     db: Session = Depends(get_db),
-    current_user: HRUser = Depends(get_current_user),
+    current_user: HRUser = Depends(get_employee_mailbox),
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -657,7 +672,7 @@ def view_attachment(
     provider: ProviderParam,
     att_id: int,
     db: Session = Depends(get_db),
-    current_user: HRUser = Depends(get_current_user),
+    current_user: HRUser = Depends(get_employee_mailbox),
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -702,7 +717,7 @@ def download_attachment(
     provider: ProviderParam,
     att_id: int,
     db: Session = Depends(get_db),
-    current_user: HRUser = Depends(get_current_user),
+    current_user: HRUser = Depends(get_employee_mailbox),
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -751,7 +766,7 @@ def download_multiple(
     provider: ProviderParam,
     data: MultipleDownloadRequest,
     db: Session = Depends(get_db),
-    current_user: HRUser = Depends(get_current_user),
+    current_user: HRUser = Depends(get_employee_mailbox),
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -804,7 +819,7 @@ def download_multiple(
 def download_all(
     provider: ProviderParam,
     db: Session = Depends(get_db),
-    current_user: HRUser = Depends(get_current_user),
+    current_user: HRUser = Depends(get_employee_mailbox),
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
@@ -846,7 +861,7 @@ def download_all(
 def manual_sync(
     provider: ProviderParam,
     db: Session = Depends(get_db),
-    current_user: HRUser = Depends(get_current_user),
+    current_user: HRUser = Depends(get_employee_mailbox),
 ):
     provider_value = provider.value
     svc = get_provider_svc(provider_value)
