@@ -1098,11 +1098,11 @@ def calculate_parsability_score(text: str) -> dict:
         return {"score": 0.0, "details": {}, "parsable": False}
 
     checks = {
-        "name":       bool(extract_name(text)),
-        "email":      bool(re.search(EMAIL_REGEX, text)),
-        "phone":      bool(extract_phone_numbers(text)),
-        "skills":     bool(extract_skills(text)),
-        "education":  bool(extract_education_section(text)),
+        "name": bool(extract_name(text)),
+        "email": bool(re.search(EMAIL_REGEX, text)),
+        "phone": bool(extract_phone_numbers(text)),
+        "skills": bool(extract_skills(text)),
+        "education": bool(extract_education_section(text)),
         "experience": bool(extract_section(text, SECTION_HEADERS["experience"])),
     }
 
@@ -1114,7 +1114,6 @@ def calculate_parsability_score(text: str) -> dict:
         "details": checks,
         "parsable": parsable,
     }
-
 
  
 def extract_hyperlinks_from_pdf(file_obj) -> dict:
@@ -1182,14 +1181,13 @@ def _is_tech_string(text: str) -> bool:
     if not text:
         return False
     lower = text.lower()
-    # If it starts with a tech keyword, it's definitely tech
     for kw in _TECH_KEYWORDS:
         if lower.startswith(kw):
             return True
-    if text.count(",") >= 2:  # lowered from >2 to >=2
+    if text.count(",") >= 2:  
         return True
     tech_hits = sum(1 for kw in _TECH_KEYWORDS if kw in lower)
-    if tech_hits >= 1:  # lowered from 2 to 1
+    if tech_hits >= 1:  
         return True
     return False
 
@@ -1206,10 +1204,8 @@ def _split_role_company(exp: dict) -> dict:
     role    = exp.get("role", "") or ""
     company = exp.get("companyName", "") or ""
 
-    # Strip leading bullet garbage
     company = re.sub(r'^[^A-Z]*?,\s*', '', company).strip()
 
-    # ✅ NEW: Handle "Company Name  As: - Role" or "Company Name  As: Role"
     as_match = re.search(r'^(.+?)\s+[Aa]s\s*[:\-]+\s*(.+)$', company)
     if as_match:
         candidate_company = as_match.group(1).strip()
@@ -1219,7 +1215,6 @@ def _split_role_company(exp: dict) -> dict:
             exp["role"]        = candidate_role
             return exp
 
-    # Split "SDE Intern – Bluestock Fintech (Remote)" into role + company
     if not role and company:
         for sep in [" – ", " — ", " - ", " | "]:
             if sep in company:
@@ -1241,10 +1236,7 @@ def _split_role_company(exp: dict) -> dict:
 def _clean_work_experience(exp: dict) -> dict:
     company = exp.get("companyName", "") or ""
 
-    # Strip leading bullet garbage
     company = re.sub(r'^[^A-Z]*?,\s*', '', company).strip()
-
-    # Safety net split for "Role – Company" still in companyName
     if not exp.get("role") and company:
         for sep in [" – ", " — ", " - ", " | "]:
             if sep in company:
@@ -1256,7 +1248,6 @@ def _clean_work_experience(exp: dict) -> dict:
                     exp["companyName"] = right
                     return exp
 
-    # "SQL, PostgresSQL., TCS" → "TCS"
     if _is_tech_string(company):
         parts    = [p.strip().rstrip(".") for p in company.split(",")]
         non_tech = [p for p in parts if p and not _is_tech_string(p) and len(p) > 1]
