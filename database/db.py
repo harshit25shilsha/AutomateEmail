@@ -26,6 +26,8 @@ def create_tables():
     from models.attachment_model import Attachment
     from models.attachment_activity import AttachmentActivity
     from models.employee import Employee
+    from models.candidate import Candidate
+    
 
     Base.metadata.create_all(bind=engine)
     ensure_email_received_at_column()

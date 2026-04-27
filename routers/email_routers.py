@@ -3,9 +3,10 @@ import os
 import zipfile
 from enum import Enum
 from typing import Annotated, Optional
-from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
+from database.db import SessionLocal  
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 import services.gmail_service as gmail_svc
@@ -843,9 +844,54 @@ def download_all(
     )
 
 
+def parse_new_emails_background(
+    provider_value: str,
+    hr_user_id: int,
+    sync_started_at,
+):
+    db = SessionLocal()                
+    try:
+        emails_with_attachments = (
+            db.query(Email)
+            .filter(
+                Email.provider        == provider_value,
+                Email.hr_user_id      == hr_user_id,
+                Email.has_attachments == True,
+                Email.created_at      >= sync_started_at,  
+            )
+            .all()
+        )
+
+        print(f"[BG] Parsing {len(emails_with_attachments)} new emails")
+
+        for email_record in emails_with_attachments:
+            attachments = (
+                db.query(Attachment)
+                .filter(Attachment.email_id == email_record.id)
+                .all()
+            )
+            try:
+                process_attachments_for_email(
+                    email_record, attachments, provider_value, db
+                )
+            except Exception as e:
+                import traceback
+                print(f"[BG ERROR] {email_record.subject}: {e}")
+                traceback.print_exc()
+                db.rollback()
+
+    except Exception as e:
+        import traceback
+        print(f"[BG FATAL]: {e}")
+        traceback.print_exc()
+    finally:
+        db.close()    
+        
+                       
 @router.post("/{provider}/sync", response_model=MessageResponse)
 def manual_sync(
     provider: ProviderParam,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: HRUser = Depends(get_current_user),
 ):
@@ -857,40 +903,14 @@ def manual_sync(
             detail=f"{provider_value.capitalize()} not connected.",
         )
 
+    sync_started_at = datetime.now(timezone.utc)
     count = svc.fetch_and_store_emails(current_user, db)
 
-    candidates_saved = 0
-    try:
-        emails_with_attachments = (
-            db.query(Email)
-            .filter(
-                Email.provider        == provider_value,
-                Email.hr_user_id      == current_user.id,
-                Email.has_attachments == True,
-                #Email.is_job_application == True,
-            )
-            .all()
-        )
+    background_tasks.add_task(
+        parse_new_emails_background,
+        provider_value=provider_value,
+        hr_user_id=current_user.id,
+        sync_started_at=sync_started_at,
+    )
 
-        print(f"[SYNC] Found {len(emails_with_attachments)} emails with attachments")  # ADD
-
-        for email_record in emails_with_attachments:
-            attachments = (
-                db.query(Attachment)
-                .filter(Attachment.email_id == email_record.id)
-                .all()
-            )
-
-            print(f"[SYNC] Email '{email_record.subject}' has {len(attachments)} attachments: {[a.filename for a in attachments]}")  # ADD
-
-            candidates_saved += process_attachments_for_email(
-                email_record, attachments, provider_value, db
-            )
-
-    except Exception as e:
-        import traceback
-        print(f"[SYNC RESUME ERROR]: {e}")
-        traceback.print_exc()  
-    return {
-        "message": f"Synced {count} new emails, parsed {candidates_saved} resumes"
-    }
+    return {"message": f"Synced {count} new emails, parsing resumes in background"}

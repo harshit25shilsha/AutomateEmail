@@ -537,6 +537,14 @@ WORK EXPERIENCE RULES (strictly follow these):
   paragraph describing a role, extract the role and company from that summary as a work experience entry.
   Look for patterns like "X years of experience as [role] at [company]" or 
   "developer with experience in [company-type] building [tech]".
+STRICT EXPERIENCE RULES:
+- "role" = job title ONLY. Never include tech, dates, or bullets.
+- "company" = employer name ONLY. Stop at the first comma if what follows looks like tech.
+- Technologies at the end of an experience entry (e.g. "Technologies Used: ...") 
+  belong to that entry — they are NOT a new experience entry.
+- Do NOT create a new experience entry just because you see a "Technologies Used:" line.
+- If multiple projects are listed under ONE employer, create ONE experience entry only.
+
 PROJECT RULES (strictly follow these):
 - Some resumes write projects like:
     "Language: Java, Spring Boot, MySQL"  ← this is the tech stack, NOT the project name
@@ -549,21 +557,13 @@ PROJECT RULES (strictly follow these):
 - "technologies" must be a list of tech strings extracted from the project line or its bullets (e.g. ["Next.js", "React", "Prisma", "Tailwind"]). Always populate this — never leave it as [].
 - "description" should be the project description text from the bullets below the project heading.
 - If the project heading line contains both a name and tech stack separated by "–", "-", "|", or just spaces after the title, split them: everything before the separator is the name, everything after goes into technologies.
-STRICT EXPERIENCE RULES:
-- "role" = job title ONLY. Never include tech, dates, or bullets.
-- "company" = employer name ONLY. Stop at the first comma if what follows looks like tech.
-- Technologies at the end of an experience entry (e.g. "Technologies Used: ...") 
-  belong to that entry — they are NOT a new experience entry.
-- Do NOT create a new experience entry just because you see a "Technologies Used:" line.
-- If multiple projects are listed under ONE employer, create ONE experience entry only.
 
 Resume Text:
 {text[:12000]}
 """
 
     max_retries = 3
-    retry_delays = [60, 120, 180]  # wait 1min, 2min, 3min between retries
-
+    retry_delays = [60, 120, 180] 
     for attempt in range(max_retries):
         try:
             response = groq_client.chat.completions.create(
@@ -593,7 +593,6 @@ Resume Text:
                 break
 
     return {}
-
 
 
 def extract_projects_from_experience(llm_experiences: list) -> list:

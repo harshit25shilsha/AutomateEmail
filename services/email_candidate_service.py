@@ -141,8 +141,6 @@ def _extract_projects_from_experience(work_experiences: list) -> list:
     return projects
 
 
-
-
 def _extract_projects_via_llm(resume_text: str) -> list:
     try:
         prompt = f"""
@@ -246,9 +244,9 @@ def _valid_linkedin(url: str) -> bool:
     p = urlparse(url.strip())
     return "linkedin.com" in (p.netloc or "") and "/in/" in p.path
 
+    
 
 def process_attachments_for_email(email_record, attachments: list, provider: str, db) -> int:
-
     saved = 0
     now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -320,7 +318,6 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
                     and any(kw in c.lower() for kw in _cert_keywords)
                 ]
 
-            
             llm_exp = llm_data.get("experience") or []
             if llm_exp and isinstance(llm_exp[0], dict):
                 work_experiences = _build_work_experiences(llm_exp)
@@ -338,19 +335,19 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
             if llm_proj and isinstance(llm_proj[0], dict) and llm_proj[0].get("name"):
                 candidate_projects = [
                     {
-                        "projectId":    None,
-                        "candidateId":    None, 
-                        "projectName":  p.get("name", ""),
-                        "technologies": p.get("technologies", []),
-                        "description":  p.get("description", ""),
-                        "startDate":    None,
-                        "endDate":      None,
-                        "role":           None, 
-                        "client":       None,
-                        "projectIndustry": None,      
-                        "duration":       None,  
-                        "projectUrl":   None,
-                        "projectImages": [],
+                        "projectId":       None,
+                        "candidateId":     None,
+                        "projectName":     p.get("name", ""),
+                        "technologies":    p.get("technologies", []),
+                        "description":     p.get("description", ""),
+                        "startDate":       None,
+                        "endDate":         None,
+                        "role":            None,
+                        "client":          None,
+                        "projectIndustry": None,
+                        "duration":        None,
+                        "projectUrl":      None,
+                        "projectImages":   [],
                     }
                     for p in llm_proj if isinstance(p, dict)
                 ]
@@ -379,6 +376,33 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
                 source          = "email_sync",
             ).first()
             if existing:
+                continue
+
+            previous = db.query(Candidate).filter_by(
+                sender_email = email_record.candidate_email,
+                source       = "email_sync",
+            ).first()
+            if previous:
+                candidate_projects = _clean_project_names(candidate_projects)
+                previous.name            = name
+                previous.phone           = phone
+                previous.github          = github
+                previous.linkedin        = linkedin
+                previous.skills          = skills
+                previous.experience      = work_experiences
+                previous.education       = educations
+                previous.projects        = candidate_projects
+                previous.certifications  = certifications
+                previous.resume_url      = resume_url
+                previous.raw_text        = sanitize_text(text)
+                previous.email_date      = str(email_record.date or "")
+                previous.email_subject   = email_record.subject or ""
+                previous.attachment_name = filename
+                previous.email_id        = email_record.email_id
+                previous.created_at      = now_str
+                db.commit()
+                saved += 1
+                print(f"[UPDATED] EmailCandidate: {name} | {filename}")
                 continue
 
             candidate_projects = _clean_project_names(candidate_projects)

@@ -37,7 +37,6 @@ from dateutil import parser as date_parser
 router = APIRouter(prefix="/resume", tags=["Resume"])
 
 def _merge(primary, fallback):
-    """Return primary if truthy, else fallback."""
     return primary if primary else fallback
 
 
