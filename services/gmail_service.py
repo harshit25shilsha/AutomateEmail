@@ -25,7 +25,7 @@ SCOPES         = ['https://www.googleapis.com/auth/gmail.readonly',
 ATTACHMENT_DIR = 'attachments/gmail'
 
 
-# ── Get Service From DB Token ─────────────────────────────────
+# -- Get Service From DB Token ---------------------------------
 def get_service(hr_user: HRUser, db: Session):
     if not hr_user.access_token:
         raise Exception("Gmail not connected. Please login again.")
@@ -47,7 +47,7 @@ def is_authenticated(hr_user: HRUser) -> bool:
     return hr_user.provider == "gmail" and hr_user.access_token is not None
 
 
-# ── Helpers ───────────────────────────────────────────────────
+# -- Helpers ---------------------------------------------------
 def _decode_str(value):
     if not value:
         return ""
@@ -81,6 +81,13 @@ def _get_body(payload):
         if data:
             body_text = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
     return body_text.strip()
+
+def _normalize_plain_text_body(body: str) -> str:
+    """
+    Normalize line endings before building the MIME message so plain-text
+    emails keep their paragraph and line-break structure consistently.
+    """
+    return (body or "").replace("\r\n", "\n").replace("\r", "\n")
 
 def _save_attachment(service, msg_id, part):
     filename = _decode_str(part.get("filename", ""))
@@ -129,7 +136,8 @@ def send_email(
     msg["subject"] = subject
 
     subtype = "html" if is_html else "plain"
-    msg.attach(MIMEText(body, subtype, "utf-8"))
+    normalized_body = body if is_html else _normalize_plain_text_body(body)
+    msg.attach(MIMEText(normalized_body, subtype, "utf-8"))
     _add_attachments(msg, attachments)
 
     raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
@@ -168,110 +176,117 @@ def _add_attachments(msg, attachments: list[dict] | None = None):
         msg.attach(part)
 
 
+def _list_message_refs(service, label_ids: list[str], page_token: str | None = None):
+    return service.users().messages().list(
+        userId="me",
+        maxResults=500,
+        labelIds=label_ids,
+        pageToken=page_token,
+    ).execute()
 
-# ── Fetch & Store Emails ──────────────────────────────────────
+
+def _iter_message_refs(service):
+    """
+    Fetch only inbox and spam messages so sent mail is excluded from sync.
+    """
+    for label_ids in (["INBOX"], ["SPAM"]):
+        page_token = None
+        while True:
+            results = _list_message_refs(service, label_ids=label_ids, page_token=page_token)
+            for msg_ref in results.get("messages", []):
+                yield msg_ref
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+
+
+
+# -- Fetch & Store Emails --------------------------------------
 def fetch_and_store_emails(hr_user: HRUser, db: Session) -> int:
     service    = get_service(hr_user, db)
     count      = 0
-    page_token = None
+    seen_message_ids: set[str] = set()
 
-    while True:
-        results = service.users().messages().list(
-            userId='me',
-            maxResults=500,
-            pageToken=page_token
+    for msg_ref in _iter_message_refs(service):
+        msg_id = msg_ref.get("id", "")
+        if not msg_id or msg_id in seen_message_ids:
+            continue
+        seen_message_ids.add(msg_id)
+
+        exists = (
+            db.query(Email)
+            .filter_by(email_id=msg_id, hr_user_id=hr_user.id)
+            .first()
+        )
+        if exists:
+            continue
+
+        msg = service.users().messages().get(
+            userId="me", id=msg_id, format="full"
         ).execute()
+        headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
 
-        messages = results.get('messages', [])
-        if not messages:
-            break
+        from_header                     = headers.get("From", "")
+        candidate_name, candidate_email = _extract_name_email(from_header)
+        subject                         = _decode_str(headers.get("Subject", ""))
+        body                            = _get_body(msg["payload"])
+        date                            = headers.get("Date", "")
 
-        for msg_ref in messages:
-            exists = (
-                db.query(Email)
-                .filter_by(email_id=msg_ref["id"], hr_user_id=hr_user.id)
-                .first()
-            )
-            if exists:
-                continue
+        att_names = []
+        parts = msg["payload"].get("parts", [])
+        for part in parts:
+            fname = _decode_str(part.get("filename", ""))
+            if fname:
+                att_names.append(fname)
 
-            msg     = service.users().messages().get(
-                userId='me', id=msg_ref['id'], format='full'
-            ).execute()
-            headers = {h['name']: h['value'] for h in msg['payload']['headers']}
+        extracted = extract_email_data(
+            sender=from_header,
+            subject=subject,
+            raw_body=body,
+            date=date,
+            attachment_names=att_names,
+        )
 
-            from_header                      = headers.get("From", "")
-            candidate_name, candidate_email  = _extract_name_email(from_header)
-            subject                          = _decode_str(headers.get("Subject", ""))
-            body                             = _get_body(msg['payload'])
-            date                             = headers.get("Date", "")
+        final_name = candidate_name or extracted["candidate_name"]
 
-            # ── Collect attachment filenames for extractor ────
-            att_names = []
-            parts     = msg['payload'].get("parts", [])
-            for part in parts:
-                fname = _decode_str(part.get("filename", ""))
-                if fname:
-                    att_names.append(fname)
+        email_record = Email(
+            hr_user_id=hr_user.id,
+            email_id=msg_id,
+            provider="gmail",
+            candidate_name=final_name,
+            candidate_email=candidate_email,
+            subject=subject,
+            body=body,
+            date=date,
+            received_at=parse_email_datetime(date),
+            has_attachments=False,
+            is_job_application=extracted["is_job_application"],
+            job_position=extracted["job_position"],
+        )
+        db.add(email_record)
+        db.flush()
 
-            # ── Extract job position + is_job_application ─────
-            extracted = extract_email_data(
-                sender           = from_header,
-                subject          = subject,
-                raw_body         = body,
-                date             = date,
-                attachment_names = att_names
-            )
+        for part in parts:
+            if part.get("filename"):
+                att_data = _save_attachment(service, msg_id, part)
+                if att_data:
+                    att_info = process_attachment(att_data["file_path"])
 
-            # Use extractor name only if Gmail header name is empty
-            final_name = candidate_name or extracted["candidate_name"]
+                    db.add(Attachment(
+                        email_id=email_record.id,
+                        filename=att_data["filename"],
+                        file_path=att_data["file_path"],
+                        file_size=att_data["file_size"],
+                        file_type=att_data["file_type"],
+                        phone=att_info.get("phone"),
+                        linkedin=att_info.get("linkedin"),
+                        github=att_info.get("github"),
+                        skills=json.dumps(att_info.get("skills", [])),
+                        experience=att_info.get("experience"),
+                    ))
+                    email_record.has_attachments = True
 
-            email_record = Email(
-                hr_user_id      = hr_user.id,
-                email_id        = msg['id'],
-                provider        = "gmail",
-                candidate_name  = final_name,
-                candidate_email = candidate_email,
-                subject         = subject,
-                body            = body,
-                date            = date,
-                received_at     = parse_email_datetime(date),
-                has_attachments = False,
-                # ── New fields from extractor ─────────────────
-                is_job_application = extracted["is_job_application"],
-                job_position       = extracted["job_position"],
-            )
-            db.add(email_record)
-            db.flush()
-
-            # ── Save attachments + read content ───────────────
-            for part in parts:
-                if part.get("filename"):
-                    att_data = _save_attachment(service, msg['id'], part)
-                    if att_data:
-                        # Read resume/CV content for extra info
-                        att_info = process_attachment(att_data["file_path"])
-
-                        db.add(Attachment(
-                            email_id  = email_record.id,
-                            filename  = att_data["filename"],
-                            file_path = att_data["file_path"],
-                            file_size = att_data["file_size"],
-                            file_type = att_data["file_type"],
-                            # ── Extra info from resume ────────
-                            phone    = att_info.get("phone"),
-                            linkedin = att_info.get("linkedin"),
-                            github   = att_info.get("github"),
-                            skills   = json.dumps(att_info.get("skills", [])),
-                            experience = att_info.get("experience"),
-                        ))
-                        email_record.has_attachments = True
-
-            db.commit()
-            count += 1
-
-        page_token = results.get('nextPageToken')
-        if not page_token:
-            break
+        db.commit()
+        count += 1
 
     return count
