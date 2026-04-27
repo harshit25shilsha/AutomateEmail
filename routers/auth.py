@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database.db import get_db
 from models.hr_user import HRUser
+from models.employee import TokenBlacklist
 from schemas.email_schema import HRLoginResponse, MessageResponse
 from utils.security import (
     encrypt_token, decrypt_token,
@@ -13,7 +14,7 @@ from utils.security import (
     get_current_employee
 )
 from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
+from google.oauth2.credentials import credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from msal import PublicClientApplication, SerializableTokenCache
 from dotenv import load_dotenv
