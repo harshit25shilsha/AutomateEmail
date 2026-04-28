@@ -34,7 +34,6 @@ class AttachmentSchema(BaseModel):
     class Config:
         from_attributes = True
 
-
 class EmailSchema(BaseModel):
     id:              int
     email_id:        str
@@ -66,7 +65,6 @@ class MonitorStatus(BaseModel):
     last_check:    Optional[str] = None
 
 
-
 class MessageResponse(BaseModel):
     message: str
     hr_user_id: Optional[int] = None
@@ -76,8 +74,6 @@ class MessageResponse(BaseModel):
 
 class MultipleDownloadRequest(BaseModel):
     attachment_ids: List[int]         
-
-
 
 # Request and Response models for email Sending 
 

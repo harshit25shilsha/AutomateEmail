@@ -928,4 +928,9 @@ def manual_sync(
         sync_started_at=sync_started_at,
     )
 
-    return {"message": f"Synced {count} new emails, parsing resumes in background"}
+    return {
+        "message":     f"Synced {count} new emails, parsing resumes in background",
+        "hr_user_id":  current_user.id,       
+        "employee_id": current_user.employee_id, 
+        "provider":    provider_value,           
+    }

@@ -1,6 +1,7 @@
 .env
 myenv
 credentials.json
+drive_credentials.json
 __pycache__/
 *.pyc
 test.py

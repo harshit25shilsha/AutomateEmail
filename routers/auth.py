@@ -7,7 +7,6 @@ from sqlalchemy import func
 from database.db import get_db
 from models.employee import TokenBlacklist
 from models.hr_user import HRUser
-from models.employee import TokenBlacklist
 from schemas.email_schema import HRLoginResponse, MessageResponse
 from utils.security import (
     encrypt_token, decrypt_token,
@@ -15,7 +14,7 @@ from utils.security import (
     get_current_employee
 )
 from google.auth.transport.requests import Request
-from google.oauth2.credentials import credentials
+from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from msal import PublicClientApplication, SerializableTokenCache
 from dotenv import load_dotenv
@@ -124,6 +123,8 @@ def gmail_connect(
         db.refresh(hr_user)
 
         return {
+            "access_token": credentials.credentials,
+            "token_type":   "bearer",
             "hr_id":        hr_user.id,
             "employee_id":  employee_id,
             "name":         hr_user.name,
@@ -192,6 +193,8 @@ def outlook_connect(
         db.refresh(hr_user)
 
         return {
+            "access_token": credentials.credentials,
+            "token_type":   "bearer",
             "hr_id":        hr_user.id,
             "employee_id":  employee_id,
             "name":         hr_user.name,
@@ -274,5 +277,3 @@ def logout(
         "employee_id": int(current_employee.get("employee_id") or 0),
         "provider": hr_user.provider,
     }
-
-

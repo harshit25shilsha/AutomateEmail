@@ -27,6 +27,7 @@ def create_tables():
     from models.attachment_activity import AttachmentActivity
     from models.employee import Employee
     from models.candidate import Candidate
+    from resume_analyzer.models import ResumeAnalysis 
     
 
     Base.metadata.create_all(bind=engine)

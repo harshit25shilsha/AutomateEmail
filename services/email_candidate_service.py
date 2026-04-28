@@ -8,7 +8,7 @@ from groq import Groq
 from fastapi import UploadFile
 from urllib.parse import urlparse
 from models.candidate import Candidate
-
+from resume_analyzer.integration import run_resume_analyzer
 from services.resume_service import (
     extract_text,
     extract_text_and_links,       
@@ -244,8 +244,6 @@ def _valid_linkedin(url: str) -> bool:
     p = urlparse(url.strip())
     return "linkedin.com" in (p.netloc or "") and "/in/" in p.path
 
-    
-
 def process_attachments_for_email(email_record, attachments: list, provider: str, db) -> int:
     saved = 0
     now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
@@ -376,15 +374,39 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
                 source          = "email_sync",
             ).first()
             if existing:
+                print(f"[SKIP] Already processed: {filename}")
                 continue
 
-            previous = db.query(Candidate).filter_by(
-                sender_email = email_record.candidate_email,
-                source       = "email_sync",
-            ).first()
+            previous = None
+
+            if email:
+                previous = db.query(Candidate).filter_by(
+                    email  = email,
+                    source = "email_sync",
+                ).first()
+
+            if not previous and phone:
+                previous = db.query(Candidate).filter_by(
+                    phone  = phone,
+                    source = "email_sync",
+                ).first()
+
+            if not previous and linkedin and _valid_linkedin(linkedin):
+                previous = db.query(Candidate).filter_by(
+                    linkedin = linkedin,
+                    source   = "email_sync",
+                ).first()
+
+            if not previous and github and _valid_github(github):
+                previous = db.query(Candidate).filter_by(
+                    github = github,
+                    source = "email_sync",
+                ).first()
+
             if previous:
                 candidate_projects = _clean_project_names(candidate_projects)
                 previous.name            = name
+                previous.email           = email         
                 previous.phone           = phone
                 previous.github          = github
                 previous.linkedin        = linkedin
@@ -399,6 +421,7 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
                 previous.email_subject   = email_record.subject or ""
                 previous.attachment_name = filename
                 previous.email_id        = email_record.email_id
+                previous.sender_email    = email_record.candidate_email or ""
                 previous.created_at      = now_str
                 db.commit()
                 saved += 1
@@ -434,6 +457,7 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
             db.commit()
             saved += 1
             print(f"[SAVED] EmailCandidate: {name} | {filename}")
+            run_resume_analyzer(record, file_path, filename, provider, db)
 
         except Exception as e:
             db.rollback()
