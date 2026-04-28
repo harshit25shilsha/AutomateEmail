@@ -1,3 +1,4 @@
+import re
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from enum import Enum
 from datetime import datetime
@@ -14,6 +15,16 @@ class UserTypeEnum(str, Enum):
     admin    = "admin"
     hr = "hr"
 
+def validate_password_strength(password:str)-> str:
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+    if not re.search(r"[A-Z]", password):
+        raise ValueError("Password must contain at least one uppercase character")
+    if not re.search(r"\d",password):
+        raise ValueError("Password must contain at least one number")
+    if not re.search(r"[^A-Za-z0-9]",password):
+        raise ValueError("Password must contain at least one special character")
+    return password
 class EmployeeRegister(BaseModel):
     name:      str
     email:     EmailStr
@@ -21,6 +32,11 @@ class EmployeeRegister(BaseModel):
     mobile:    str
     gender:    GenderEnum
     user_type: UserTypeEnum
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        return validate_password_strength(v)
 
     @field_validator("mobile")
     @classmethod
@@ -36,6 +52,11 @@ class EmployeeLogin(BaseModel):
     email:    Optional[EmailStr] = None
     mobile:   Optional[str]     = None
     password: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        return validate_password_strength(v)
 
     @model_validator(mode="after")
     def check_email_or_mobile(self):

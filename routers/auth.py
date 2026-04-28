@@ -48,12 +48,13 @@ def resolve_employee_hr_user(
     current_employee: dict,
     provider: str | None = None,
     hr_user_id: int | None = None,
+    include_inactive: bool = False,
 ) -> HRUser:
     employee_id = int(current_employee["sub"])
-    query = db.query(HRUser).filter(
-        HRUser.employee_id == employee_id,
-        HRUser.is_active.is_(True),
-    )
+    query = db.query(HRUser).filter(HRUser.employee_id == employee_id)
+
+    if not include_inactive:
+        query = query.filter(HRUser.is_active.is_(True))
 
     if provider:
         query = query.filter(HRUser.provider == provider)
@@ -118,6 +119,7 @@ def gmail_connect(
         # Step 4 — Save encrypted Gmail token
         hr_user.access_token = encrypt_token(creds.to_json())
         hr_user.provider     = "gmail"
+        hr_user.is_active    = True
         hr_user.last_login   = func.now()
         db.commit()
         db.refresh(hr_user)
@@ -188,6 +190,7 @@ def outlook_connect(
         # Step 4 — Save encrypted Outlook token
         hr_user.access_token = encrypt_token(cache.serialize())
         hr_user.provider     = "outlook"
+        hr_user.is_active    = True
         hr_user.last_login   = func.now()
         db.commit()
         db.refresh(hr_user)
@@ -260,20 +263,31 @@ def logout(
     provider: str | None = None,
     hr_user_id: int | None = None,
 ):
-    hr_user = resolve_employee_hr_user(
-        db=db,
-        current_employee=current_employee,
-        provider=provider,
-        hr_user_id=hr_user_id,
-    )
+    if provider or hr_user_id is not None:
+        hr_user = resolve_employee_hr_user(
+            db=db,
+            current_employee=current_employee,
+            provider=provider,
+            hr_user_id=hr_user_id,
+            include_inactive=True,
+        )
+        hr_user.access_token = None
+        hr_user.is_active = False
+        db.commit()
+        return {
+            "message": f"{hr_user.provider.capitalize()} account disconnected successfully",
+            "hr_user_id": hr_user.id,
+            "employee_id": int(current_employee.get("employee_id") or 0),
+            "provider": hr_user.provider,
+        }
+
     if db.query(TokenBlacklist).filter_by(token=credentials.credentials).first():
         raise HTTPException(status_code=400, detail="Already logged out")
+
     db.add(TokenBlacklist(token=credentials.credentials))
     db.commit()
     # JWT is stateless — frontend just deletes token
     return {
         "message": f"{current_employee.get('name')} logged out successfully",
-        "hr_user_id": hr_user.id,
         "employee_id": int(current_employee.get("employee_id") or 0),
-        "provider": hr_user.provider,
     }
