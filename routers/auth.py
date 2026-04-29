@@ -75,6 +75,22 @@ def resolve_employee_hr_user(
         )
     return hr_users[0]
 
+def deactivate_employee_mailboxes(
+        db: Session,
+        employee_id: int,
+        execlude_hr_user_id: int | None = None,
+)-> None:
+    query = db.query(HRUser).filter(HRUser.employee_id == employee_id,
+        HRUser.is_active.is_(True),
+    )
+
+    if execlude_hr_user_id is not None:
+        query = query.filter(HRUser.id != execlude_hr_user_id)
+
+    accounts = query.all()
+    for account in accounts:
+        account.access_token = None
+        account.is_active = False
 
 # ── Gmail Login/Register
 @router.post("/gmail/connect", response_model=HRLoginResponse)
@@ -115,6 +131,12 @@ def gmail_connect(
             )
             db.add(hr_user)
             db.flush()
+    # automatically deactivates any other active email accounts for the employee (if they exist)
+        deactivate_employee_mailboxes(
+            db = db,
+            employee_id = employee_id,
+            execlude_hr_user_id = hr_user.id
+        )
 
         # Step 4 — Save encrypted Gmail token
         hr_user.access_token = encrypt_token(creds.to_json())
@@ -186,6 +208,12 @@ def outlook_connect(
             )
             db.add(hr_user)
             db.flush()
+
+        deactivate_employee_mailboxes(
+            db=db,
+            employee_id=employee_id,
+            execlude_hr_user_id=hr_user.id
+        )
 
         # Step 4 — Save encrypted Outlook token
         hr_user.access_token = encrypt_token(cache.serialize())
