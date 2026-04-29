@@ -99,11 +99,93 @@ INSTRUCTIONS
        • Primarily Figma / wireframes / UX research            → UI/UX Designer
        • Primarily QA / Selenium / Cypress / Playwright        → QA Engineer
        • Primarily HR / Recruitment / Talent Acquisition       → HR
+       ── FRONTEND ───────────────────────────────────────────────────────
+       • Primarily React / Redux / Next.js / React Native (web)     → React Developer
+       • Primarily Angular / RxJS / NgRx / Angular Material         → Angular Developer
+       • Primarily Vue.js / Vuex / Nuxt.js                          → Vue.js Developer
+       • Primarily HTML / CSS / SASS / jQuery / Bootstrap (no FW)   → Frontend Developer
+       • Primarily Svelte / SvelteKit                               → Frontend Developer
+       • Primarily React Native / Expo (mobile focus)               → React Native Developer
+
+       ── BACKEND ────────────────────────────────────────────────────────
+       • Primarily Node.js / Express / NestJS (backend focus)       → Node.js Developer
+       • Primarily Python / Django / Flask / FastAPI                 → Python Developer
+       • Primarily Java / Spring / SpringBoot / Hibernate            → Java Developer
+       • Primarily C# / .NET / ASP.NET / Entity Framework           → .NET Developer
+       • Primarily PHP / Laravel / Symfony / CodeIgniter             → PHP Developer
+       • Primarily Ruby / Rails                                      → Ruby on Rails Developer
+       • Primarily Go / Golang / Gin / Echo                         → Golang Developer
+       • Primarily Rust / Actix / Tokio (backend focus)             → Rust Developer
+       • Primarily gRPC / GraphQL / REST (multi-lang backend)       → Backend Developer
+
+       ── FULL STACK ──────────────────────────────────────────────────────
+       • Equal React + Node, or MERN / MEAN / MEVN stack title      → Full Stack Developer
+       • Equal Angular + Java / .NET                                 → Full Stack Developer
+       • SDE Intern with MERN / MEAN / full-stack project           → Full Stack Developer
+       • Next.js + Node.js / Prisma with equal frontend+backend     → Full Stack Developer
+
+       ── MOBILE ─────────────────────────────────────────────────────────
+       • Primarily Flutter / Dart                                    → Flutter Developer
+       • Primarily Swift / SwiftUI / Xcode / iOS SDK                → iOS Developer
+       • Primarily Kotlin / Jetpack Compose / Android SDK           → Android Developer
+       • Primarily React Native / Expo (mobile, not web)            → React Native Developer
+       • Cross-platform: Flutter + React Native mixed               → Mobile Developer
+
+       ── DATA & AI ───────────────────────────────────────────────────────
+       • Primarily ML / TensorFlow / PyTorch / Scikit-learn / NLP   → Machine Learning Engineer
+       • Primarily LLMs / LangChain / RAG / Prompt Engineering      → AI/ML Engineer
+       • Primarily Tableau / Power BI / Looker / data analysis      → Data Analyst
+       • Primarily Spark / Hadoop / Airflow / ETL pipelines         → Data Engineer
+       • Primarily statistics / R / Python (analysis + modeling)    → Data Scientist
+       • Primarily OpenCV / YOLO / image classification             → Computer Vision Engineer
+       • Primarily NLP / Transformers / BERT / GPT fine-tuning      → NLP Engineer
+
+       ── DEVOPS & CLOUD ──────────────────────────────────────────────────
+       • Primarily Docker / Kubernetes / Terraform / CI-CD          → DevOps Engineer
+       • Primarily AWS / GCP / Azure architecture and services      → Cloud Engineer
+       • Primarily SRE / observability / Prometheus / Grafana       → Site Reliability Engineer
+       • Primarily Linux / Bash / Ansible / infrastructure          → Systems Engineer
+
+       ── SECURITY ────────────────────────────────────────────────────────
+       • Primarily pen testing / OWASP / Burp Suite / CTF           → Cybersecurity Engineer
+       • Primarily SIEM / SOC / incident response / compliance      → Security Analyst
+
+       ── BLOCKCHAIN & EMBEDDED ───────────────────────────────────────────
+       • Primarily Solidity / Web3.js / smart contracts / DeFi      → Blockchain Developer
+       • Primarily C / C++ / RTOS / microcontrollers / firmware     → Embedded Systems Engineer
+       • Primarily FPGA / VHDL / Verilog                            → Hardware Engineer
+
+       ── GAMING ──────────────────────────────────────────────────────────
+       • Primarily Unity / C# / game physics / game design          → Game Developer (Unity)
+       • Primarily Unreal Engine / C++ / Blueprints                 → Game Developer (Unreal)
+
+       ── DESIGN & QA ─────────────────────────────────────────────────────
+       • Primarily Figma / wireframes / UX research / prototyping   → UI/UX Designer
+       • Primarily Selenium / Cypress / Playwright / manual QA      → QA Engineer
+       • Primarily SDET / automation frameworks / performance test  → SDET
+
+       ── DATABASE ────────────────────────────────────────────────────────
+       • Primarily SQL / PL-SQL / Oracle / DB tuning / DBA tasks    → Database Administrator
+       • Primarily MongoDB / DynamoDB / database design (no backend)→ Database Engineer
+
+       ── NON-TECH / BUSINESS ─────────────────────────────────────────────
+       • Primarily HR / Recruitment / Talent Acquisition            → HR
+       • Primarily BA / requirements / user stories / Jira          → Business Analyst
+       • Primarily Scrum / Agile coaching / project delivery        → Project Manager
+
+       ── FALLBACK ────────────────────────────────────────────────────────
+       • Resume is completely unclear or unrelated to above         → General
+
+   - Hard Rules:
+       • Do NOT assign a domain based on one minor library mention.
+       • "Backend Developer" is only used when language is truly mixed/unclear.
+       • "Frontend Developer" is only used when no major framework dominates.
+       • Always prefer the most specific domain over a generic one.
+       • Never use "General" if any tech pattern is detectable. 
    - Do NOT choose a domain because of one minor library mention.
    - Only use "General" if the resume is completely unclear or unrelated to tech/business.
-
 2. SKILLS
-   - List the top 6–10 skills extracted directly from the resume.
+   - List the top 10-20 skills extracted directly from the resume.
    - Use exact short names: "React.js", "Node.js", "Redux", "NestJS", "AWS", "PostgreSQL".
 
 3. LEVEL  (based ONLY on experience_years above)
