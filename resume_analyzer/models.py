@@ -1,35 +1,38 @@
-from sqlalchemy import Column, Integer, String, Float, Text
-from sqlalchemy.dialects.postgresql import JSONB
-from database.db import Base
+from __future__ import annotations
+
+from datetime import datetime
+from typing import List
+
+from sqlalchemy import JSON, DateTime, Float, Integer, String, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-class ResumeAnalysis(Base):
-    __tablename__ = "resume_analysis"
+class Base(DeclarativeBase):
+    pass
 
-    id = Column(Integer, primary_key=True, index=True)
 
-    candidate_name  = Column(Text,        nullable=True)
-    candidate_email = Column(Text,        nullable=True)
+class Candidate(Base):
+    __tablename__ = "candidates"
 
-    domain  = Column(String(120), nullable=False)
-    skills  = Column(JSONB,       nullable=True)   
-    level   = Column(String(50),  nullable=True)   
-    score   = Column(Float,       nullable=True)   
-    summary = Column(Text,        nullable=True)   
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
-    filename      = Column(Text, nullable=True)    
-    folder_path   = Column(Text, nullable=True)    
-    drive_link    = Column(Text, nullable=True)    
-    drive_file_id = Column(Text, nullable=True)    
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    source   = Column(String(50), nullable=True)  
-    provider = Column(String(50), nullable=True)  
+    domain: Mapped[str] = mapped_column(String(100), nullable=False)
+    skills: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    level: Mapped[str] = mapped_column(String(50), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    summary: Mapped[str] = mapped_column(String(512), nullable=False, default="")
 
-    created_at = Column(Text, nullable=True)       
-    def __repr__(self):
-        return (
-            f"<ResumeAnalysis id={self.id} "
-            f"name={self.candidate_name!r} "
-            f"domain={self.domain!r} "
-            f"score={self.score}>"
-        )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    folder: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    drive_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    drive_link: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    folder_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

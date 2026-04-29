@@ -10,7 +10,6 @@ SCOPES               = ["https://www.googleapis.com/auth/drive"]
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "drive_credentials.json")
 
 
-
 @lru_cache(maxsize=1)
 def _get_drive_service():
     creds = service_account.Credentials.from_service_account_file(
@@ -19,9 +18,7 @@ def _get_drive_service():
     return build("drive", "v3", credentials=creds)
 
 
-
 def _get_or_create_folder(service, folder_name: str, parent_id: str = None) -> str:
-
     query = (
         f"name='{folder_name}' "
         f"and mimeType='application/vnd.google-apps.folder' "
@@ -50,22 +47,28 @@ def _get_or_create_folder(service, folder_name: str, parent_id: str = None) -> s
 
 
 def ensure_folder_path(folder_path: str) -> str:
-    service = _get_drive_service()
-    parts   = [p for p in folder_path.strip("/").split("/") if p]
+    service        = _get_drive_service()
+    root_folder_id = os.getenv("DRIVE_ROOT_FOLDER_ID")
+    parts          = [p for p in folder_path.strip("/").split("/") if p]
 
-    parent_id = None
-    for part in parts:
+    if root_folder_id:
+        parent_id = root_folder_id
+        sub_parts = parts[1:]  
+    else:
+        parent_id = None
+        sub_parts = parts       
+
+    for part in sub_parts:
         parent_id = _get_or_create_folder(service, part, parent_id)
 
     return parent_id
 
 
-
 def upload_resume(
-    file_bytes: bytes,
-    filename:   str,
+    file_bytes:  bytes,
+    filename:    str,
     folder_path: str,
-    mime_type:  str = "application/pdf",
+    mime_type:   str = "application/pdf",
 ) -> dict:
     service   = _get_drive_service()
     folder_id = ensure_folder_path(folder_path)

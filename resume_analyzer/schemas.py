@@ -1,54 +1,67 @@
-from typing import List, Optional, Any
+from __future__ import annotations
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
+
+
 
 class ResumeAnalysisResult(BaseModel):
     domain: str = Field(
-        description="Detected job domain e.g. Python Developer, React Developer"
+        description="Detected job domain – must exactly match one entry from the valid_domains list."
     )
-    skills: List[str] = Field(
-        description="Top 5-8 relevant technical skills found in the resume"
-    )
-    level: str = Field(
-        description="Experience level: Fresher, Mid-Level, or Senior"
-    )
-    score: float = Field(
-        description="Resume score out of 100 based on skills, experience, education, quality"
-    )
-    summary: str = Field(
-        description="One concise professional summary sentence"
-    )
-    filename: str = Field(
-        description="Generated professional filename e.g. John_Doe_Python_Developer_3Yrs.pdf"
-    )
-    folder: str = Field(
-        description="Google Drive folder path e.g. Candidates/Python_Developer/"
-    )
+    skills: List[str] = Field(description="Top 8-10 skills extracted from the resume.")
+    level: str = Field(description="Fresher | Mid-Level | Senior")
+    score: float = Field(description="Score out of 100: skills(30) + experience(30) + education(20) + projects/certs(20).")
+    summary: str = Field(description="One professional sentence. E.g. 'React developer with 3 years of Redux and API experience.'")
+    filename: str = Field(description="FirstName_LastName_DomainSlug_NYrs.pdf  – no spaces, underscores only.")
+    folder: str = Field(description="Candidates/DomainSlug/  e.g. Candidates/React_Developer/")
 
 
 
-class ResumeAnalysisRecord(BaseModel):
-    id:              int
-    candidate_name:  Optional[str]
-    candidate_email: Optional[str]
-    domain:          str
-    skills:          Optional[Any]
-    level:           Optional[str]
-    score:           Optional[float]
-    summary:         Optional[str]
-    filename:        Optional[str]
-    folder_path:     Optional[str]
-    drive_link:      Optional[str]
-    drive_file_id:   Optional[str]
-    source:          Optional[str]
-    provider:        Optional[str]
-    created_at:      Optional[str]
+class AnalyzeResumeRequest(BaseModel):
+    parsed_resume: Dict[str, Any]
+    file_bytes_b64: Optional[str] = None       
+    original_filename: Optional[str] = None
+
+
+class DriveUploadResult(BaseModel):
+    drive_file_id: Optional[str] = None
+    drive_link: Optional[str] = None
+    folder_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+class AnalyzeResumeResponse(BaseModel):
+    name: str
+    email: Optional[str] = None
+    domain: str
+    skills: List[str]
+    level: str
+    score: float
+    summary: str
+    filename: str
+    folder: str
+    drive_file_id: Optional[str] = None
+    drive_link: Optional[str] = None
+    folder_id: Optional[str] = None
+    drive_error: Optional[str] = None
+    record_id: Optional[int] = None
+
+
+class CandidateOut(BaseModel):
+    id: int
+    name: str
+    email: Optional[str] = None
+    domain: str
+    skills: List[str]
+    level: str
+    score: float
+    summary: str
+    filename: str
+    folder: str
+    drive_file_id: Optional[str] = None
+    drive_link: Optional[str] = None
+    source: Optional[str] = None
+    created_at: Optional[str] = None
 
     class Config:
         from_attributes = True
-
-
-
-class StatusWrapper(BaseModel):
-    httpCode: str
-    success:  bool
-    message:  str

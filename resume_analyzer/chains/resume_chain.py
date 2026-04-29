@@ -1,111 +1,156 @@
-import os
-import json, re
-from functools import lru_cache
+from __future__ import annotations
 
-from langchain_groq import ChatGroq
-from langchain_core.prompts import PromptTemplate
+import json
+import logging
+import os
+import re
+from datetime import datetime
+from functools import lru_cache
+from zoneinfo import ZoneInfo
+
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_groq import ChatGroq
 
 from resume_analyzer.schemas import ResumeAnalysisResult
 
+log = logging.getLogger(__name__)
 
-
-VALID_DOMAINS = [
-    "Python Developer", "React Developer", "Java Developer",
-    "Node.js Developer", "Angular Developer", "Vue.js Developer",
-    "Full Stack Developer", "Flutter Developer", "Android Developer",
-    "iOS Developer", "Data Analyst", "Data Scientist",
-    "DevOps Engineer", "UI/UX Designer", "QA Engineer", "HR", "General",
+EXAMPLE_DOMAINS: list[str] = [
+    "Python Developer",
+    "React Developer",
+    "Java Developer",
+    "Node.js Developer",
+    "Angular Developer",
+    "Vue.js Developer",
+    "Full Stack Developer",
+    "Flutter Developer",
+    "Android Developer",
+    "iOS Developer",
+    "Data Analyst",
+    "Data Scientist",
+    "Machine Learning Engineer",
+    "DevOps Engineer",
+    "UI/UX Designer",
+    "QA Engineer",
+    "HR",
+    "Blockchain Developer",
+    "Embedded Systems Engineer",
+    "Cybersecurity Engineer",
+    "Game Developer",
 ]
 
 
 @lru_cache(maxsize=1)
 def _get_llm() -> ChatGroq:
-
     return ChatGroq(
-        model="deepseek-r1-distill-llama-70b",
+        model="llama-3.3-70b-versatile",
         api_key=os.getenv("GROQ_API_KEY"),
-        temperature=0.1,     
-        max_tokens=700,
-        max_retries=3,        
+        temperature=0.1,
+        max_tokens=900,
+        max_retries=3,
     )
 
 
-def _get_parser() -> JsonOutputParser:
-    return JsonOutputParser(pydantic_object=ResumeAnalysisResult)
+_PROMPT_TEMPLATE = """\
+You are a senior technical recruiter with 15 years of experience.
+Analyze the resume data below and return ONLY a valid JSON object — no markdown, no preamble, no explanation.
 
+════════════════════════════════════
+CANDIDATE DATA
+════════════════════════════════════
+Name                : {name}
+Email               : {email}
+Profile Summary     : {profile_summary}
+Skills              : {skills}
+Total Experience    : {experience_years} years
+Work Entries        : {experience_entries}
+Education Entries   : {education_count}
+Projects            : {projects_count}
+Certifications      : {certifications_count}
 
-def _get_prompt(parser: JsonOutputParser) -> PromptTemplate:
-    template = """You are an expert technical recruiter and resume analyst.
-
-Analyze the following resume data and return a structured JSON response.
-
-Candidate Information:
-- Name: {name}
-- Skills: {skills}
-- Total Experience: {experience_years} years
-- Number of Work Experiences: {experience_entries}
-- Education entries: {education_count}
-- Projects: {projects_count}
-- Certifications: {certifications_count}
-- Resume Text Snippet:
+Resume Text (first 2500 chars):
 {raw_text_snippet}
 
-You MUST choose domain from ONLY this list:
-{valid_domains}
+════════════════════════════════════
+INSTRUCTIONS
+════════════════════════════════════
 
-Scoring guide (total 100 pts):
-- Skills match for detected domain : 30 pts
-- Work experience quality/duration : 30 pts
-- Education background             : 20 pts
-- Projects, certifications, quality: 20 pts
+1. DOMAIN
+   - Carefully read the candidate's PRIMARY tech stack, job title, and most recent role.
+   - Infer the most precise and accurate job domain from the resume itself.
+   - Write the domain as a clean professional title, e.g.:
+       "React Developer", "Node.js Developer", "Python Developer",
+       "Data Scientist", "DevOps Engineer", "UI/UX Designer", etc.
+   - The following are EXAMPLES for reference — you are NOT limited to this list.
+     If the candidate has a niche role (e.g. "Blockchain Developer", "Embedded Systems Engineer",
+     "Site Reliability Engineer"), use that exact title:
+{example_domains}
+   - Rules:
+       • Primarily React / Redux / Next.js                     → React Developer
+       • Primarily Node.js / Express / NestJS (backend focus)  → Node.js Developer
+       • Primarily Python / Django / Flask / FastAPI            → Python Developer
+       • Primarily Java / Spring / SpringBoot                   → Java Developer
+       • Equal React + Node, or MERN / MEAN / full-stack title → Full Stack Developer
+       • SDE Intern with MERN stack                            → Full Stack Developer
+       • Primarily ML / TensorFlow / PyTorch / NLP             → Machine Learning Engineer
+       • Primarily Tableau / Power BI / data analysis          → Data Analyst
+       • Primarily Docker / Kubernetes / Terraform / CI-CD     → DevOps Engineer
+       • Primarily Figma / wireframes / UX research            → UI/UX Designer
+       • Primarily QA / Selenium / Cypress / Playwright        → QA Engineer
+       • Primarily HR / Recruitment / Talent Acquisition       → HR
+   - Do NOT choose a domain because of one minor library mention.
+   - Only use "General" if the resume is completely unclear or unrelated to tech/business.
 
-Level guide:
-- Fresher   = 0 to 1 year
-- Mid-Level = 2 to 4 years
-- Senior    = 5 or more years
+2. SKILLS
+   - List the top 6–10 skills extracted directly from the resume.
+   - Use exact short names: "React.js", "Node.js", "Redux", "NestJS", "AWS", "PostgreSQL".
 
-Filename format  : FirstName_LastName_DomainSlug_NYrs.pdf
-                   Example: John_Doe_Python_Developer_3Yrs.pdf
-                   Use 0Yrs for freshers. No spaces, underscores only.
+3. LEVEL  (based ONLY on experience_years above)
+   Fresher   = 0 – 1 year
+   Mid-Level = 2 – 4 years
+   Senior    = 5+ years
 
-Folder format    : Candidates/DomainSlug/
-                   Example: Candidates/Python_Developer/
+4. SCORE  (integer 0–100, never blindly return 50)
+   Skills match for detected domain  : 30 pts max
+   Work experience quality           : 30 pts max
+   Education background              : 20 pts max
+   Projects + certifications         : 20 pts max
 
-Summary format   : One professional sentence.
-                   Example: Backend Python developer with 3 years of experience in Django and REST APIs.
+5. SUMMARY — one concise professional sentence, 15–25 words.
+   Format : "<Role> with <N> years of experience in <top 2–3 skills>."
+   Example : "React developer with 3 years of experience in Redux, Next.js, and RESTful APIs."
+   Use the candidate's ACTUAL role and skills — never use placeholder names or example text.
+
+6. FILENAME : FirstName_LastName_DomainSlug_{{exp_years_int}}Yrs.pdf
+   Example   : Ariba_Nusra_React_Developer_3Yrs.pdf
+   Rules     : underscores only, no spaces, use {exp_years_int} for years.
+
+7. FOLDER   : Candidates/DomainSlug/
+   Example   : Candidates/React_Developer/
+   Must match the domain from step 1, slugified with underscores.
 
 {format_instructions}
 """
-    return PromptTemplate(
-        template=template,
-        input_variables=[
-            "name",
-            "skills",
-            "experience_years",
-            "experience_entries",
-            "education_count",
-            "projects_count",
-            "certifications_count",
-            "raw_text_snippet",
-            "valid_domains",
-        ],
-        partial_variables={
-            "format_instructions": _get_parser().get_format_instructions(),
-        },
-    )
 
 
 def _build_chain():
-    parser = _get_parser()
-    prompt = _get_prompt(parser)
-    llm    = _get_llm()
-
-    chain = prompt | llm | parser
-    return chain
+    parser = JsonOutputParser(pydantic_object=ResumeAnalysisResult)
+    prompt = PromptTemplate(
+        template=_PROMPT_TEMPLATE,
+        input_variables=[
+            "name", "email", "profile_summary", "skills",
+            "experience_years", "exp_years_int", "experience_entries",
+            "education_count", "projects_count", "certifications_count",
+            "raw_text_snippet", "example_domains",
+        ],
+        partial_variables={"format_instructions": parser.get_format_instructions()},
+    )
+    return prompt | _get_llm() | parser
 
 
 _chain = None
+
 
 def _get_chain():
     global _chain
@@ -114,128 +159,199 @@ def _get_chain():
     return _chain
 
 
-def _build_chain_input(parsed_resume: dict) -> dict:
-    name      = (parsed_resume.get("name") or "Candidate").strip()
-    skills    = parsed_resume.get("skills") or []
-    work_exp  = parsed_resume.get("experience") or []
-    education = parsed_resume.get("education") or []
-    projects  = parsed_resume.get("projects") or []
-    certs     = parsed_resume.get("certifications") or []
-    raw_text  = (parsed_resume.get("raw_text") or "")[:2500]  
+def _parse_date(raw: str) -> datetime | None:
+    if not raw:
+        return None
+    s = raw.strip()
+    if s.lower() in ("present", "current", "till date", "ongoing", "now", ""):
+        return datetime.now(ZoneInfo("Asia/Kolkata"))
 
-    exp_years = _calculate_exp_years(work_exp)
+    s = re.sub(r"\b(\d{2})\b$", lambda m: str(2000 + int(m.group(1))), s)
 
-    return {
-        "name":               name,
-        "skills":             ", ".join(str(s) for s in skills[:25]),
-        "experience_years":   exp_years,
-        "experience_entries": len(work_exp),
-        "education_count":    len(education),
-        "projects_count":     len(projects),
-        "certifications_count": len(certs),
-        "raw_text_snippet":   raw_text,
-        "valid_domains":      "\n".join(f"  - {d}" for d in VALID_DOMAINS),
-    }
+    formats = [
+        "%b %Y", "%B %Y",
+        "%m/%Y", "%Y-%m",
+        "%b-%Y", "%B-%Y",
+        "%Y",
+        "%b %d, %Y", "%d %b %Y",
+        "%Y-%m-%d",
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+
+    try:
+        from dateutil import parser as dp
+        return dp.parse(s, default=datetime(datetime.now().year, 1, 1))
+    except Exception:
+        return None
 
 
 def _calculate_exp_years(work_experiences: list) -> float:
-    """Calculate total experience years from structured work_experience list."""
     if not work_experiences:
         return 0.0
-    try:
-        from dateutil import parser as date_parser
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
 
-        total_months = 0
-        for w in work_experiences:
-            if not isinstance(w, dict):
-                continue
-            sd = w.get("startDate")
-            ed = w.get("endDate")
-            if not sd:
-                continue
-            try:
-                start = date_parser.parse(str(sd))
-                end   = (
-                    date_parser.parse(str(ed))
-                    if ed and str(ed).lower() not in ("present", "current")
-                    else datetime.now(ZoneInfo("Asia/Kolkata"))
-                )
-                diff = (end.year - start.year) * 12 + (end.month - start.month)
-                total_months += max(0, diff)
-            except Exception:
-                continue
-        return round(total_months / 12, 1)
-    except Exception:
-        return float(len(work_experiences))
+    now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+    intervals: list[tuple[datetime, datetime]] = []
+
+    for entry in work_experiences:
+        if not isinstance(entry, dict):
+            continue
+
+        sd_raw = entry.get("startDate") or entry.get("start_date") or entry.get("from") or ""
+        ed_raw = entry.get("endDate")   or entry.get("end_date")   or entry.get("to")   or "present"
+
+        start = _parse_date(str(sd_raw))
+        end   = _parse_date(str(ed_raw)) if ed_raw else now
+
+        if start is None:
+            continue
+
+        if hasattr(start, "tzinfo") and start.tzinfo:
+            start = start.replace(tzinfo=None)
+        if end and hasattr(end, "tzinfo") and end.tzinfo:
+            end = end.replace(tzinfo=None)
+
+        end = min(end or now, now)
+        if end > start:
+            intervals.append((start, end))
+
+    if not intervals:
+        return 0.0
+
+    intervals.sort(key=lambda x: x[0])
+    merged: list[tuple[datetime, datetime]] = [intervals[0]]
+    for s, e in intervals[1:]:
+        if s <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+
+    total_days = sum((e - s).days for s, e in merged)
+    return round(total_days / 365.25, 1)
 
 
-DOMAIN_KEYWORDS: dict[str, list[str]] = {
-    "Python Developer":     ["python", "django", "flask", "fastapi"],
-    "React Developer":      ["react", "redux", "nextjs", "jsx"],
-    "Java Developer":       ["java", "spring", "springboot", "hibernate"],
-    "Node.js Developer":    ["nodejs", "node.js", "express", "nestjs"],
-    "Angular Developer":    ["angular", "rxjs"],
-    "Vue.js Developer":     ["vue", "vuex", "nuxt"],
-    "Full Stack Developer": ["fullstack", "full stack", "mern", "mean"],
-    "Flutter Developer":    ["flutter", "dart"],
-    "Android Developer":    ["android", "kotlin"],
-    "iOS Developer":        ["ios", "swift"],
-    "Data Analyst":         ["tableau", "powerbi", "data analysis", "excel"],
-    "Data Scientist":       ["machine learning", "tensorflow", "pytorch", "nlp"],
-    "DevOps Engineer":      ["docker", "kubernetes", "jenkins", "terraform"],
-    "UI/UX Designer":       ["figma", "wireframe", "prototyping", "ui/ux"],
-    "QA Engineer":          ["selenium", "cypress", "jest", "qa", "testing"],
-    "HR":                   ["recruitment", "talent acquisition", "hris"],
-}
 
-def _rule_based_fallback(parsed_resume: dict) -> dict:
-    text      = json.dumps(parsed_resume).lower()
-    scores    = {d: sum(1 for kw in kws if kw in text) for d, kws in DOMAIN_KEYWORDS.items()}
-    domain    = max(scores, key=scores.get) if max(scores.values()) > 0 else "General"
+def _slugify(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
 
-    name      = (parsed_resume.get("name") or "Candidate").strip()
-    skills    = [str(s) for s in (parsed_resume.get("skills") or [])[:8]]
-    work_exp  = parsed_resume.get("experience") or []
-    exp_years = _calculate_exp_years(work_exp)
 
-    level = (
-        "Fresher"   if exp_years <= 1 else
-        "Mid-Level" if exp_years <= 4 else
-        "Senior"
-    )
+def _level(exp_years: float) -> str:
+    if exp_years <= 1:
+        return "Fresher"
+    if exp_years <= 4:
+        return "Mid-Level"
+    return "Senior"
 
-    safe_name   = re.sub(r"[^A-Za-z0-9]", "_", name).strip("_") or "Candidate"
-    domain_slug = re.sub(r"[^A-Za-z0-9]", "_", domain).strip("_")
-    filename    = f"{safe_name}_{domain_slug}_{int(exp_years)}Yrs.pdf"
-    folder      = f"Candidates/{domain_slug}/"
 
-    print(f"[ANALYZER] Rule-based fallback → {domain}")
+def _build_filename(name: str, domain: str, exp_years: float) -> str:
+    safe_name   = _slugify(name) or "Candidate"
+    domain_slug = _slugify(domain)
+    return f"{safe_name}_{domain_slug}_{int(exp_years)}Yrs.pdf"
+
+
+def _build_folder(domain: str) -> str:
+    return f"Candidates/{_slugify(domain)}/"
+
+
+def _build_chain_input(parsed: dict, exp_years: float) -> dict:
+    name     = (parsed.get("name") or "Candidate").strip()
+    email    = parsed.get("email") or ""
+    skills   = parsed.get("skills") or []
+    work_exp = parsed.get("experience") or []
+    raw_text = (parsed.get("raw_text") or "")[:2500]
+
+    profile_summary = parsed.get("summary") or parsed.get("profile") or raw_text[:300]
+
     return {
-        "domain":   domain,
-        "skills":   skills,
-        "level":    level,
-        "score":    50.0,
-        "summary":  f"{domain} with {exp_years} year(s) of experience.",
-        "filename": filename,
-        "folder":   folder,
+        "name":                 name,
+        "email":                email,
+        "profile_summary":      profile_summary,
+        "skills":               ", ".join(str(s) for s in skills[:25]),
+        "experience_years":     exp_years,
+        "exp_years_int":        int(exp_years),
+        "experience_entries":   len(work_exp),
+        "education_count":      len(parsed.get("education") or []),
+        "projects_count":       len(parsed.get("projects") or []),
+        "certifications_count": len(parsed.get("certifications") or []),
+        "raw_text_snippet":     raw_text,
+        "example_domains":      "\n".join(f"     • {d}" for d in EXAMPLE_DOMAINS),
     }
 
+
+def _rule_based_fallback(parsed: dict) -> dict:
+
+    raw_text  = (parsed.get("raw_text") or json.dumps(parsed)).lower()
+    work_exp  = parsed.get("experience") or []
+    exp_years = _calculate_exp_years(work_exp)
+    name      = (parsed.get("name") or "Candidate").strip()
+    skills    = [str(s) for s in (parsed.get("skills") or [])[:10]]
+
+    hints = {
+        "React Developer":      ["react", "redux", "next.js"],
+        "Node.js Developer":    ["node.js", "nodejs", "nestjs"],
+        "Python Developer":     ["python", "django", "flask", "fastapi"],
+        "Java Developer":       ["java", "spring"],
+        "Full Stack Developer": ["mern", "mean", "full stack", "fullstack"],
+        "Machine Learning Engineer": ["machine learning", "tensorflow", "pytorch"],
+        "Data Analyst":         ["tableau", "power bi", "data analysis"],
+        "DevOps Engineer":      ["docker", "kubernetes", "terraform"],
+        "UI/UX Designer":       ["figma", "wireframe", "ux"],
+        "Flutter Developer":    ["flutter", "dart"],
+        "QA Engineer":          ["selenium", "cypress", "playwright"],
+        "HR":                   ["recruitment", "talent acquisition"],
+    }
+
+    best_domain, best_score = "General", 0
+    for domain, kws in hints.items():
+        score = sum(1 for kw in kws if kw in raw_text)
+        if score > best_score:
+            best_domain, best_score = domain, score
+
+    top_skills = ", ".join(skills[:3]) or "relevant technologies"
+    log.warning("[CHAIN] Fallback → %s | %.1f yrs", best_domain, exp_years)
+
+    return {
+        "domain":   best_domain,
+        "skills":   skills,
+        "level":    _level(exp_years),
+        "score":    50.0,
+        "summary":  f"{best_domain} with {int(exp_years)} year(s) of experience in {top_skills}.",
+        "filename": _build_filename(name, best_domain, exp_years),
+        "folder":   _build_folder(best_domain),
+    }
+
+
 def run_chain(parsed_resume: dict) -> dict:
+    work_exp  = parsed_resume.get("experience") or []
+    exp_years = _calculate_exp_years(work_exp)
+    log.info("[CHAIN] Experience: %.1f years from %d entries", exp_years, len(work_exp))
+
     try:
-        chain_input = _build_chain_input(parsed_resume)
-        chain       = _get_chain()
+        chain_input = _build_chain_input(parsed_resume, exp_years)
+        result      = _get_chain().invoke(chain_input)
 
-        print(f"[ANALYZER] Running LangChain chain for: {chain_input['name']}")
-        result = chain.invoke(chain_input)
+        domain = (result.get("domain") or "General").strip()
+        name   = (parsed_resume.get("name") or "Candidate").strip()
 
-        print(
-            f"[ANALYZER] ✓ Chain success → {result.get('domain')} | "
-            f"Score: {result.get('score')} | Level: {result.get('level')}"
-        )
+        result["domain"]   = domain
+        result["filename"] = _build_filename(name, domain, exp_years)
+        result["folder"]   = _build_folder(domain)
+
+        summary = result.get("summary", "")
+        if not summary or len(summary) < 20 or "john doe" in summary.lower():
+            skills_list = result.get("skills") or []
+            top_skills  = ", ".join(str(s) for s in skills_list[:3]) or "relevant technologies"
+            result["summary"] = (
+                f"{domain} with {int(exp_years)} year(s) of experience in {top_skills}."
+            )
+
+        log.info("[CHAIN] ✓ domain=%s score=%s level=%s exp=%.1f yrs",
+                 domain, result.get("score"), result.get("level"), exp_years)
         return result
 
-    except Exception as e:
-        print(f"[ANALYZER] Chain failed ({e}), using rule-based fallback")
+    except Exception as exc:
+        log.error("[CHAIN] LLM failed (%s: %s) — fallback", type(exc).__name__, exc)
         return _rule_based_fallback(parsed_resume)
