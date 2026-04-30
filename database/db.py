@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 import os
 
@@ -8,10 +9,7 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-
-class Base(DeclarativeBase):
-    pass
+Base = declarative_base()
 
 
 def get_db():
@@ -28,11 +26,9 @@ def create_tables():
     from models.attachment_model import Attachment
     from models.attachment_activity import AttachmentActivity
     from models.employee import Employee
-    from models.candidate import Candidate
-    from resume_analyzer.models import ResumeAnalysis
+    from models.email_template import EmailTemplate
 
     Base.metadata.create_all(bind=engine)
-
     ensure_email_received_at_column()
     ensure_email_owner_column()
     ensure_hr_user_employee_column()
@@ -165,6 +161,8 @@ def ensure_hr_user_employee_column():
                 )
             )
 
+    # Best-effort backfill for rows that already match an employee email.
+    employee_rows = {}
     db = SessionLocal()
     try:
         from models.employee import Employee
@@ -175,7 +173,12 @@ def ensure_hr_user_employee_column():
             for employee in db.query(Employee).all()
             if employee.email
         }
-        hr_users = db.query(HRUser).filter(HRUser.employee_id.is_(None)).all()
+
+        hr_users = (
+            db.query(HRUser)
+            .filter(HRUser.employee_id.is_(None))
+            .all()
+        )
         updated = False
         for hr_user in hr_users:
             employee_id = employee_rows.get((hr_user.email or "").lower())

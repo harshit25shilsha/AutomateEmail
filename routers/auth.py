@@ -319,3 +319,5 @@ def logout(
         "message": f"{current_employee.get('name')} logged out successfully",
         "employee_id": int(current_employee.get("employee_id") or 0),
     }
+
+
