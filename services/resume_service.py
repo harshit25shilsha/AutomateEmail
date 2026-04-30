@@ -332,39 +332,56 @@ def sanitize_text(text: str) -> str:
 
 
 def extract_name(text: str) -> Optional[str]:
-    if not text:
-        return None
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    blacklist = {'resume', 'cv', 'curriculum', 'developer', 'engineer', 'consultant', 'manager'}
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines and len(lines[0].split()) > 6:
+        first_chunk = re.split(r'\s{2,}|\|', lines[0])[0].strip()
+        lines = [first_chunk] + lines[1:]
+    blacklist = {
+        'resume', 'cv', 'curriculum', 'developer', 'engineer', 
+        'consultant', 'manager',
+        'mca', 'bca', 'btech', 'mtech', 'bsc', 'msc', 'mba',
+        'ba', 'ma', 'bcom', 'mcom', 'phd', 'bca', 'pgdm',
+        'hsc', 'ssc', 'diploma', 'intermediate',
+        'haldwani', 'dehradun', 'delhi', 'mumbai', 'bangalore',
+    }
+
+    def is_valid_name_line(line: str) -> bool:
+        words = line.split()
+        if not (2 <= len(words) <= 4):
+            return False
+        if not all(w[0].isupper() for w in words if w.isalpha()):
+            return False
+        if any(w.lower() in blacklist for w in words):  
+            return False
+        if any(char.isdigit() for char in line):
+            return False
+        if ',' in line:           
+            return False
+        if line.startswith(('●', '•', '-', '*', '/')):  
+            return False
+        if re.search(r'[@|+]', line):
+            return False
+        return True
+
     for line in lines:
         match = re.search(r"(?i)^name\s*[:\-]\s*([A-Za-z\s.]+)$", line)
         if match:
             candidate = match.group(1).strip()
-            if 2 <= len(candidate.split()) <= 4:
+            if is_valid_name_line(candidate):
                 return candidate
-    if lines:
-        first_line = lines[0]
-        words = first_line.split()
-        if (2 <= len(words) <= 4 and
-                all(w[0].isupper() for w in words if w.isalpha()) and
-                all(w.lower() not in blacklist for w in words) and
-                not any(char.isdigit() for char in first_line)):
-            return first_line
-    for line in lines[:5]:
-        words = line.split()
-        if (2 <= len(words) <= 4 and
-                all(w[0].isupper() for w in words if w.isalpha()) and
-                all(w.lower() not in blacklist for w in words) and
-                not any(char.isdigit() for char in line)):
+
+    for line in lines[:8]:
+        if is_valid_name_line(line):
             return line
+
     doc = nlp(text[:800])
     for ent in doc.ents:
         if ent.label_ == "PERSON":
             name = ent.text.strip()
-            if (2 <= len(name.split()) <= 4 and
-                    not any(char.isdigit() for char in name) and
-                    not any(word.lower() in blacklist for word in name.split())):
+            if is_valid_name_line(name):
                 return name
+
     return None
 
 
