@@ -203,9 +203,11 @@ INSTRUCTIONS
    Example : "React developer with 3 years of experience in Redux, Next.js, and RESTful APIs."
    Use the candidate's ACTUAL role and skills — never use placeholder names or example text.
 
-6. FILENAME : FirstName_LastName_DomainSlug_{{exp_years_int}}Yrs.pdf
-   Example   : Ariba_Nusra_React_Developer_3Yrs.pdf
-   Rules     : underscores only, no spaces, use {exp_years_int} for years.
+6. FILENAME : FirstName_LastName_DomainSlug_<ExpLabel>.pdf
+   - If experience < 1 year  → use months: e.g. 6Months  → Ariba_Nusra_React_Developer_6Months.pdf  
+   - If experience >= 1 year → use years:  e.g. 3Yrs     → Ariba_Nusra_React_Developer_3Yrs.pdf
+   - Use this value exactly: {exp_label}
+   Rules: underscores only, no spaces.
 
 7. FOLDER   : Candidates/DomainSlug/
    Example   : Candidates/React_Developer/
@@ -213,6 +215,22 @@ INSTRUCTIONS
 
 {format_instructions}
 """
+
+def _format_exp(exp_years: float) -> str:
+    """Return '6Months' for <1 year, '2Yrs' for >=1 year."""
+    if exp_years < 1.0:
+        months = round(exp_years * 12)
+        return f"{months}Months" if months > 0 else "0Months"
+    return f"{int(exp_years)}Yrs"
+
+
+def _format_exp_text(exp_years: float) -> str:
+    """Human-readable: '6 months' or '2 years'."""
+    if exp_years < 1.0:
+        months = round(exp_years * 12)
+        return f"{months} month{'s' if months != 1 else ''}"
+    yrs = int(exp_years)
+    return f"{yrs} year{'s' if yrs != 1 else ''}"
 
 
 def _build_chain():
@@ -250,8 +268,9 @@ def _parse_date(raw: str) -> datetime | None:
     s = re.sub(r"\b(\d{2})\b$", lambda m: str(2000 + int(m.group(1))), s)
 
     formats = [
+        "%Y-%m",       
         "%b %Y", "%B %Y",
-        "%m/%Y", "%Y-%m",
+        "%m/%Y",
         "%b-%Y", "%B-%Y",
         "%Y",
         "%b %d, %Y", "%d %b %Y",
@@ -314,6 +333,20 @@ def _calculate_exp_years(work_experiences: list) -> float:
     return round(total_days / 365.25, 1)
 
 
+def _calculate_exp_years_from_parsed(parsed: dict) -> float:
+    work_exp = parsed.get("work_experiences") or []
+    work_exp = [e for e in work_exp if isinstance(e, dict) and e.get("startDate")]
+    
+    if work_exp:
+        return _calculate_exp_years(work_exp)
+    llm_exp = parsed.get("experience") or []
+    llm_exp = [e for e in llm_exp if isinstance(e, dict) and e.get("startDate")]
+    
+    if llm_exp:
+        return _calculate_exp_years(llm_exp)
+    
+    return 0.0
+
 
 def _slugify(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
@@ -326,11 +359,11 @@ def _level(exp_years: float) -> str:
         return "Mid-Level"
     return "Senior"
 
-
 def _build_filename(name: str, domain: str, exp_years: float) -> str:
     safe_name   = _slugify(name) or "Candidate"
     domain_slug = _slugify(domain)
-    return f"{safe_name}_{domain_slug}_{int(exp_years)}Yrs.pdf"
+    exp_str     = _format_exp(exp_years)         
+    return f"{safe_name}_{domain_slug}_{exp_str}.pdf"
 
 
 def _build_folder(domain: str) -> str:
@@ -341,7 +374,8 @@ def _build_chain_input(parsed: dict, exp_years: float) -> dict:
     name     = (parsed.get("name") or "Candidate").strip()
     email    = parsed.get("email") or ""
     skills   = parsed.get("skills") or []
-    work_exp = parsed.get("experience") or []
+    work_exp = parsed.get("work_experiences") or parsed.get("experience") or []
+    work_exp = [e for e in work_exp if isinstance(e, dict)]
     raw_text = (parsed.get("raw_text") or "")[:2500]
 
     profile_summary = parsed.get("summary") or parsed.get("profile") or raw_text[:300]
@@ -351,8 +385,9 @@ def _build_chain_input(parsed: dict, exp_years: float) -> dict:
         "email":                email,
         "profile_summary":      profile_summary,
         "skills":               ", ".join(str(s) for s in skills[:25]),
-        "experience_years":     exp_years,
-        "exp_years_int":        int(exp_years),
+        "experience_years":  _format_exp_text(exp_years),   
+        "exp_years_int":     int(exp_years),                 
+        "exp_label":         _format_exp(exp_years),
         "experience_entries":   len(work_exp),
         "education_count":      len(parsed.get("education") or []),
         "projects_count":       len(parsed.get("projects") or []),
@@ -399,15 +434,20 @@ def _rule_based_fallback(parsed: dict) -> dict:
         "skills":   skills,
         "level":    _level(exp_years),
         "score":    50.0,
-        "summary":  f"{best_domain} with {int(exp_years)} year(s) of experience in {top_skills}.",
+        "summary":  f"{best_domain} with {_format_exp_text(exp_years)} of experience in {top_skills}.",
         "filename": _build_filename(name, best_domain, exp_years),
         "folder":   _build_folder(best_domain),
     }
 
 
 def run_chain(parsed_resume: dict) -> dict:
+    import json
+    print("[DEBUG] Keys in parsed_resume:", list(parsed_resume.keys()))
+    print("[DEBUG] work_experiences:", parsed_resume.get("work_experiences"))
+    print("[DEBUG] experience:", parsed_resume.get("experience"))
+    exp_years = _calculate_exp_years_from_parsed(parsed_resume)
+    print("[DEBUG] exp_years calculated:", exp_years)
     work_exp  = parsed_resume.get("experience") or []
-    exp_years = _calculate_exp_years(work_exp)
     log.info("[CHAIN] Experience: %.1f years from %d entries", exp_years, len(work_exp))
 
     try:
@@ -426,7 +466,7 @@ def run_chain(parsed_resume: dict) -> dict:
             skills_list = result.get("skills") or []
             top_skills  = ", ".join(str(s) for s in skills_list[:3]) or "relevant technologies"
             result["summary"] = (
-                f"{domain} with {int(exp_years)} year(s) of experience in {top_skills}."
+                f"{domain} with {_format_exp_text(exp_years)} of experience in {top_skills}."
             )
 
         log.info("[CHAIN] ✓ domain=%s score=%s level=%s exp=%.1f yrs",

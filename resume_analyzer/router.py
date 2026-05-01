@@ -55,7 +55,6 @@ def _extract_and_parse(file: UploadFile) -> dict:
 
 
 def _record_to_dict(r: ResumeAnalysis) -> dict:
-    """Convert a ResumeAnalysis ORM object to a plain dict for JSON responses."""
     return {
         "id":             r.id,
         "candidate_name":  r.candidate_name,

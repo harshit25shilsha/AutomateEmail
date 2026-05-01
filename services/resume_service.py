@@ -539,7 +539,9 @@ Rules:
 - For experience[].projects: if the candidate mentions working on specific named projects WITHIN a job entry, list them here. These will be merged into the global projects list.
 - For certifications: extract every certification, license, or course completion mentioned anywhere in the resume.
 - For gender: extract only if explicitly stated (Male/Female/Other). Return empty string if not found.
-- For dates: use format "Month YYYY" or "YYYY". Use "Present" for current roles.
+- For dates: ALWAYS use full 4-digit year format "Month YYYY" (e.g. "August 2022", "April 2024"). 
+  If the resume shows a 2-digit year like "Aug 22", expand it to "Aug 2022". 
+  Use "Present" for current roles. Never return 2-digit years.
 WORK EXPERIENCE RULES (strictly follow these):
 - If the company line contains "As:" or "As:-" followed by a title 
   (e.g. "Millenium Intech Pvt Ltd As: - React Developer"), 
@@ -847,8 +849,13 @@ def parse_work_experiences(lines, candidateId=None):
     def _normalize(d):
         if not d or str(d).lower() in ("present", "current"):
             return None
+        d = re.sub(
+            r'^([A-Za-z]+)\s+(\d{2})$',
+            lambda m: f"{m.group(1)} {2000 + int(m.group(2))}",
+            d.strip()
+        )
         try:
-            dt = date_parser.parse(d)
+            dt = date_parser.parse(d, default=datetime(2000, 1, 1))
             return f"{dt.year}-{dt.month:02d}"
         except Exception:
             return normalize_date(d)
