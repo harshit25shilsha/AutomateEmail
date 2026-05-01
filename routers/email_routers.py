@@ -18,6 +18,7 @@ from models.email_model import Email
 from models.hr_user import HRUser
 from routers.auth import resolve_employee_hr_user
 from utils.security import get_current_employee
+import asyncio
 from schemas.email_schema import (
     EmailListResponse,
     MessageResponse,
@@ -859,12 +860,19 @@ def download_all(
     )
 
 
-def parse_new_emails_background(
-    provider_value: str,
-    hr_user_id: int,
-    sync_started_at,
-):
-    db = SessionLocal()                
+def parse_new_emails_background(provider_value, hr_user_id, sync_started_at):
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_parse_new_emails_async(provider_value, hr_user_id, sync_started_at))
+        else:
+            loop.run_until_complete(_parse_new_emails_async(provider_value, hr_user_id, sync_started_at))
+    except RuntimeError:
+        asyncio.run(_parse_new_emails_async(provider_value, hr_user_id, sync_started_at))
+
+
+async def _parse_new_emails_async(provider_value, hr_user_id, sync_started_at):
+    db = SessionLocal()
     try:
         emails_with_attachments = (
             db.query(Email)
@@ -872,7 +880,7 @@ def parse_new_emails_background(
                 Email.provider        == provider_value,
                 Email.hr_user_id      == hr_user_id,
                 Email.has_attachments == True,
-                Email.created_at      >= sync_started_at,  
+                Email.created_at      >= sync_started_at,
             )
             .all()
         )
@@ -886,7 +894,7 @@ def parse_new_emails_background(
                 .all()
             )
             try:
-                process_attachments_for_email(
+                await process_attachments_for_email(
                     email_record, attachments, provider_value, db
                 )
             except Exception as e:
@@ -900,9 +908,9 @@ def parse_new_emails_background(
         print(f"[BG FATAL]: {e}")
         traceback.print_exc()
     finally:
-        db.close()    
-        
-                       
+        db.close()
+
+
 @router.post("/{provider}/sync", response_model=MessageResponse)
 def manual_sync(
     provider: ProviderParam,
@@ -930,7 +938,7 @@ def manual_sync(
 
     return {
         "message":     f"Synced {count} new emails, parsing resumes in background",
-        "hr_user_id":  current_user.id,       
-        "employee_id": current_user.employee_id, 
-        "provider":    provider_value,           
+        "hr_user_id":  current_user.id,
+        "employee_id": current_user.employee_id,
+        "provider":    provider_value,
     }

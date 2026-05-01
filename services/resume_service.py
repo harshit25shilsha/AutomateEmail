@@ -6,7 +6,8 @@ import uuid
 import fitz 
 import time
 import mimetypes
-from groq import Groq
+#from groq import Groq
+from groq import AsyncGroq
 from botocore.exceptions import NoCredentialsError
 from typing import List, Optional
 from PyPDF2 import PdfReader, PdfWriter
@@ -20,10 +21,12 @@ from zoneinfo import ZoneInfo
 import phonenumbers
 from dateutil import parser
 from dateutil import parser as date_parser
+import aioboto3
+import asyncio
 
 nlp = spacy.load("en_core_web_sm")
 
-groq_client = Groq(
+groq_client = AsyncGroq(
     api_key=os.getenv("GROQ_API_KEY")
 )
 
@@ -217,8 +220,7 @@ EXTRA_STOP_HEADERS = [
 ]
 
 
-
-def upload_file_to_s3(file: UploadFile, folder="resumes") -> str:
+async def upload_file_to_s3(file: UploadFile, folder="resumes") -> str:
     try:
         ext = file.filename.split(".")[-1].lower()
         key = f"{folder}/{uuid.uuid4()}.{ext}"
@@ -243,16 +245,23 @@ def upload_file_to_s3(file: UploadFile, folder="resumes") -> str:
                 f.write(file.file.read())
             upload_path = temp_file_path
 
-        with open(upload_path, "rb") as f:
-            s3_client.upload_fileobj(
-                f,
-                os.getenv("AWS_BUCKET_NAME"),
-                key,
-                ExtraArgs={
-                    "ContentType": content_type,
-                    "ContentDisposition": f'inline; filename="{file.filename}"'
-                }
-            )
+        session = aioboto3.Session()
+        async with session.client(
+            "s3",
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            region_name=os.getenv("AWS_REGION")
+        ) as s3:
+            with open(upload_path, "rb") as f:
+                await s3.upload_fileobj(
+                    f,
+                    os.getenv("AWS_BUCKET_NAME"),
+                    key,
+                    ExtraArgs={
+                        "ContentType": content_type,
+                        "ContentDisposition": f'inline; filename="{file.filename}"'
+                    }
+                )
         os.remove(temp_file_path)
         url = f"https://{os.getenv('AWS_BUCKET_NAME')}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{key}"
         return url
@@ -263,9 +272,8 @@ def upload_file_to_s3(file: UploadFile, folder="resumes") -> str:
     except Exception as e:
         print(f"Failed to upload to S3: {e}")
         return None
-
-
-def extract_text(file: UploadFile) -> str:
+    
+def _extract_text_sync(file: UploadFile) -> str:
     try:
         if file.filename.lower().endswith(".pdf"):
             file.file.seek(0)
@@ -312,6 +320,10 @@ def extract_text(file: UploadFile) -> str:
         return ""
 
     return ""
+
+
+async def extract_text(file: UploadFile) -> str:
+    return await asyncio.to_thread(_extract_text_sync, file)
 
 
 def extract_text_and_links(file: UploadFile) -> tuple[str, dict]:
@@ -474,7 +486,7 @@ def extract_date_range(text):
     return None, None
 
 
-def parse_with_llm(text: str) -> dict:
+async def parse_with_llm(text: str) -> dict:
     prompt = f"""
 You are an advanced ATS resume parser.
 
@@ -585,7 +597,7 @@ Resume Text:
     retry_delays = [60, 120, 180] 
     for attempt in range(max_retries):
         try:
-            response = groq_client.chat.completions.create(
+            response = await groq_client.chat.completions.create(
                 #model="llama-3.3-70b-versatile",
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "user", "content": prompt}],
@@ -606,7 +618,7 @@ Resume Text:
             if "429" in err and attempt < max_retries - 1:
                 wait = retry_delays[attempt]
                 print(f"[LLM RATE LIMIT] attempt {attempt+1}/{max_retries}, waiting {wait}s...")
-                time.sleep(wait)
+                await asyncio.sleep(wait)
                 continue
             else:
                 print(f"[LLM ERROR]: {e}")

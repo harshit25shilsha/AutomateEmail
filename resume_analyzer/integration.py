@@ -10,7 +10,7 @@ from services.resume_service import parse_work_experiences
 from resume_analyzer.models import ResumeAnalysis
 
 
-def run_resume_analyzer(
+async def run_resume_analyzer(
     candidate,
     file_path:  str,
     filename:   str,
@@ -53,7 +53,7 @@ def run_resume_analyzer(
             "raw_text":         raw_text,
         }
 
-        analysis = analyze_resume(parsed_resume)
+        analysis = await analyze_resume(parsed_resume)
 
         drive_result = {"file_id": "", "drive_link": ""}
         if file_path and os.path.exists(file_path):

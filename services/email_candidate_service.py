@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 from groq import Groq
 from fastapi import UploadFile
 from urllib.parse import urlparse
+from groq import AsyncGroq
+import asyncio
 from models.candidate import Candidate
 from resume_analyzer.integration import run_resume_analyzer
 from services.resume_service import (
@@ -141,7 +143,7 @@ def _extract_projects_from_experience(work_experiences: list) -> list:
     return projects
 
 
-def _extract_projects_via_llm(resume_text: str) -> list:
+async def _extract_projects_via_llm(resume_text: str) -> list:
     try:
         prompt = f"""
 You are a resume parser. The resume below has no dedicated Projects section,
@@ -164,8 +166,8 @@ If no identifiable projects exist, return [].
 Resume:
 {resume_text[:4000]}
 """
-        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        response = groq_client.chat.completions.create(
+        groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+        response = await groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
@@ -244,7 +246,7 @@ def _valid_linkedin(url: str) -> bool:
     p = urlparse(url.strip())
     return "linkedin.com" in (p.netloc or "") and "/in/" in p.path
 
-def process_attachments_for_email(email_record, attachments: list, provider: str, db) -> int:
+async def process_attachments_for_email(email_record, attachments: list, provider: str, db) -> int:
     saved = 0
     now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -261,9 +263,9 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
         try:
             wrapper = _FileWrapper(filename, file_path)
             if filename.lower().endswith(".pdf"):
-                text, pdf_links = extract_text_and_links(wrapper)
+                text, pdf_links = await extract_text_and_links(wrapper)
             else:
-                text      = extract_text(wrapper)
+                text      = await extract_text(wrapper)
                 pdf_links = {"linkedin": None, "github": None, "portfolio": None, "other": []}
             wrapper.close()
 
@@ -271,8 +273,10 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
                 print(f"[SKIP] Empty text from: {filename}")
                 continue
 
-            parsed   = parse_resume_text(text)
-            llm_data = parse_with_llm(text)
+            parsed, llm_data = await asyncio.gather(
+                asyncio.to_thread(parse_resume_text, text),
+                parse_with_llm(text),
+            )
 
             name  = parsed.get("name")  or llm_data.get("name")
             email = parsed.get("email") or llm_data.get("email")
@@ -354,7 +358,7 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
                     llm_data.get("experience") or []
                 )
                 if not candidate_projects:
-                    candidate_projects = _extract_projects_via_llm(text)
+                    candidate_projects = await _extract_projects_via_llm(text)
                 if not candidate_projects:
                     candidate_projects = parse_projects(
                         parsed.get("projects") or text.splitlines()
@@ -363,7 +367,7 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
             resume_url = None
             try:
                 wrapper_s3 = _FileWrapper(filename, file_path)
-                resume_url = upload_file_to_s3(wrapper_s3)
+                resume_url =  await upload_file_to_s3(wrapper_s3)
                 wrapper_s3.close()
             except Exception as e:
                 print(f"[S3 WARN] Could not upload {filename}: {e}")
@@ -457,7 +461,7 @@ def process_attachments_for_email(email_record, attachments: list, provider: str
             db.commit()
             saved += 1
             print(f"[SAVED] EmailCandidate: {name} | {filename}")
-            run_resume_analyzer(record, file_path, filename, provider, db)
+            await run_resume_analyzer(record, file_path, filename, provider, db)
 
         except Exception as e:
             db.rollback()

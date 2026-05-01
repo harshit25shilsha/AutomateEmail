@@ -415,12 +415,12 @@ def _rule_based_fallback(parsed: dict) -> dict:
     }
 
 
-def run_chain(parsed_resume: dict) -> dict:
+async def run_chain(parsed_resume: dict) -> dict:
     exp_years = _calculate_exp_years_from_parsed(parsed_resume)
 
     try:
         chain_input = _build_chain_input(parsed_resume, exp_years)
-        result = _get_chain().invoke(chain_input)
+        result = await _get_chain().invoke(chain_input)
 
         domain = (result.get("domain") or "General").strip()
         name = (parsed_resume.get("name") or "Candidate").strip()
