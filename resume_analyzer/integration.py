@@ -3,17 +3,18 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
- 
+
 from resume_analyzer.analyzer_service import analyze_resume
 from resume_analyzer.drive_service import upload_resume, get_mime_type
+from services.resume_service import parse_work_experiences
 from resume_analyzer.models import ResumeAnalysis
 
 
 def run_resume_analyzer(
-    candidate,        
-    file_path:  str,   
-    filename:   str,   
-    provider:   str,   
+    candidate,
+    file_path:  str,
+    filename:   str,
+    provider:   str,
     db:         Session,
 ) -> None:
 
@@ -25,17 +26,31 @@ def run_resume_analyzer(
                 for p in candidate.projects
             ]
 
+        raw_text = candidate.raw_text or ""
+
+        work_experiences = getattr(candidate, "work_experiences", None)
+
+        if not isinstance(work_experiences, list) or not any(
+            isinstance(e, dict) and e.get("startDate")
+            for e in work_experiences
+        ):
+            print(f"[ANALYZER] work_experiences null/invalid in DB for '{candidate.name}' — re-parsing from raw_text")
+            all_lines        = [l.strip() for l in raw_text.splitlines() if l.strip()]
+            work_experiences = parse_work_experiences(all_lines)
+
+        print(f"[ANALYZER] work_experiences for '{candidate.name}': {work_experiences}")
+
         parsed_resume = {
-            "name":           candidate.name or "Unknown",
-            "email":          candidate.email or "",
-            "phone":          candidate.phone or "",
-            "skills":         candidate.skills or [],
-            "experience":     candidate.experience or [], 
-            "work_experiences": candidate.work_experiences or [],  
-            "education":      candidate.education or [],
-            "projects":       project_names,
-            "certifications": candidate.certifications or [],
-            "raw_text":       candidate.raw_text or "",
+            "name":             candidate.name or "Unknown",
+            "email":            candidate.email or "",
+            "phone":            getattr(candidate, "phone", "") or "",
+            "skills":           candidate.skills or [],
+            "experience":       candidate.experience or [],
+            "work_experiences": work_experiences,              
+            "education":        candidate.education or [],
+            "projects":         project_names,
+            "certifications":   candidate.certifications or [],
+            "raw_text":         raw_text,
         }
 
         analysis = analyze_resume(parsed_resume)

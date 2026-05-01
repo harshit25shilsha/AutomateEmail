@@ -9,6 +9,7 @@ from routers.employee_auth import router as employee_router
 from models.employee import Employee  
 from routers.resume_router import router as resume_router
 from routers.template_router import router as template_router
+from routers.signature_router import router as signature_router
 from resume_analyzer.router import router as resume_analyzer_router
 
 
@@ -41,6 +42,7 @@ app.include_router(employee_router)
 app.include_router(resume_router) 
 app.include_router(outreach_router)                   
 app.include_router(template_router)
+app.include_router(signature_router)
 app.include_router(resume_analyzer_router)                 
 
 
