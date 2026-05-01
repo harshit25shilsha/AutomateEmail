@@ -27,12 +27,12 @@ def create_tables():
     from models.attachment_activity import AttachmentActivity
     from models.employee import Employee
     from models.email_template import EmailTemplate
+    from models.signature import Signature
 
     Base.metadata.create_all(bind=engine)
     ensure_email_received_at_column()
     ensure_email_owner_column()
     ensure_hr_user_employee_column()
-
 
 def ensure_email_received_at_column():
     from models.email_model import Email
