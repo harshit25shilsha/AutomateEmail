@@ -38,3 +38,4 @@ langchain-groq
 google-api-python-client
 google-auth
 google-auth-httplib2
+aioboto3

@@ -325,15 +325,11 @@ def _extract_text_sync(file: UploadFile) -> str:
 async def extract_text(file: UploadFile) -> str:
     return await asyncio.to_thread(_extract_text_sync, file)
 
-
-def extract_text_and_links(file: UploadFile) -> tuple[str, dict]:
-    
-    text = extract_text(file)
-
+async def extract_text_and_links(file: UploadFile) -> tuple[str, dict]:
+    text = await extract_text(file)
     pdf_links = {"linkedin": None, "github": None, "portfolio": None, "other": []}
     if file.filename.lower().endswith(".pdf"):
-        pdf_links = extract_hyperlinks_from_pdf(file.file)
-
+        pdf_links = await asyncio.to_thread(extract_hyperlinks_from_pdf, file.file)
     return text, pdf_links
 
 

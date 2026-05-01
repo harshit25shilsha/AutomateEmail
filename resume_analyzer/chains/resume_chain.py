@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 from functools import lru_cache
 from zoneinfo import ZoneInfo
+import asyncio
 
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
@@ -420,7 +421,7 @@ async def run_chain(parsed_resume: dict) -> dict:
 
     try:
         chain_input = _build_chain_input(parsed_resume, exp_years)
-        result = await _get_chain().invoke(chain_input)
+        result = await asyncio.to_thread(_get_chain().invoke, chain_input)
 
         domain = (result.get("domain") or "General").strip()
         name = (parsed_resume.get("name") or "Candidate").strip()
